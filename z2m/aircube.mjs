@@ -49,6 +49,28 @@ const fzAirCubeAirQuality = {
     },
 };
 
+const fzBrightness = {
+    cluster: 'genAnalogOutput',
+    type: ['attributeReport', 'readResponse'],
+    convert: (model, msg, publish, options, meta) => {
+        if (msg.data.hasOwnProperty('presentValue')) {
+            return { brightness: Math.round(msg.data['presentValue']) };
+        }
+    },
+};
+
+const tzBrightness = {
+    key: ['brightness'],
+    convertSet: async (entity, key, value, meta) => {
+        const clamped = Math.min(100, Math.max(0, value));
+        await entity.write('genAnalogOutput', { presentValue: clamped });
+        return { state: { brightness: clamped } };
+    },
+    convertGet: async (entity, key, meta) => {
+        await entity.read('genAnalogOutput', ['presentValue']);
+    },
+};
+
 const definition = {
     zigbeeModel: ['AirCube'],
     model: 'AirCube',
@@ -58,8 +80,8 @@ const definition = {
         temperature(),
         humidity(),
     ],
-    fromZigbee: [fzAirCubeAirQuality],
-    toZigbee: [],
+    fromZigbee: [fzAirCubeAirQuality, fzBrightness],
+    toZigbee: [tzBrightness],
     exposes: [
         e.numeric('eco2', exposes.access.STATE)
             .withUnit('ppm')
@@ -76,6 +98,11 @@ const definition = {
             .withDescription('Air Quality Index')
             .withValueMin(0)
             .withValueMax(500),
+        e.numeric('brightness', exposes.access.ALL)
+            .withUnit('%')
+            .withDescription('LED brightness (0-100)')
+            .withValueMin(0)
+            .withValueMax(100),
     ],
     configure: async (device, coordinatorEndpoint) => {
         const endpoint = device.getEndpoint(10);
@@ -90,6 +117,12 @@ const definition = {
         await endpoint.configureReporting('msRelativeHumidity', [{
             attribute: 'measuredValue', minimumReportInterval: 1,
             maximumReportInterval: 60, reportableChange: 100,
+        }]);
+        /* Bind and configure reporting for brightness */
+        await endpoint.bind('genAnalogOutput', coordinatorEndpoint);
+        await endpoint.configureReporting('genAnalogOutput', [{
+            attribute: 'presentValue', minimumReportInterval: 1,
+            maximumReportInterval: 60, reportableChange: 5,
         }]);
     },
 };

@@ -498,6 +498,24 @@ static void configure_reporting(void)
     };
     esp_zb_zcl_update_reporting_info(&aqi_rpt);
 
+    /* Brightness: report every 60s max, or on 5.0% change */
+    esp_zb_zcl_reporting_info_t brightness_rpt = {
+        .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+        .ep                 = AIRCUBE_ENDPOINT,
+        .cluster_id         = ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT,
+        .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
+        .u.send_info.min_interval     = 1,
+        .u.send_info.max_interval     = 60,
+        .u.send_info.def_min_interval = 1,
+        .u.send_info.def_max_interval = 60,
+        .attr_id            = ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID,
+        .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
+    };
+    float brightness_delta = 5.0f;
+    memcpy(&brightness_rpt.u.send_info.delta, &brightness_delta, sizeof(float));
+    esp_zb_zcl_update_reporting_info(&brightness_rpt);
+
 }
 
 static void apply_zigbee_tx_power(void)
@@ -666,6 +684,21 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc, in
 bool zigbee_is_connected(void)
 {
     return s_connected;
+}
+
+void zigbee_report_brightness(void)
+{
+    if (!s_connected) {
+        return;
+    }
+    float zb_brightness = led_get_intensity() * 100.0f;
+    esp_zb_lock_acquire(portMAX_DELAY);
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
+    report_attr(ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT,
+                ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID);
+    esp_zb_lock_release();
 }
 
 void zigbee_start_pairing(void)
