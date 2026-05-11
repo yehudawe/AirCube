@@ -26,6 +26,7 @@
 #include "esp_check.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_zigbee_core.h"
@@ -64,12 +65,25 @@ static volatile bool s_connected  = false;
 static volatile bool s_pairing    = false;
 static volatile bool s_rejoining  = false;
 static TickType_t    s_pairing_start = 0;
+static TickType_t    s_last_join_tick = 0;       /* When we most recently joined         */
 static uint32_t      s_rejoin_backoff_ms = 0;
 static uint8_t       s_sw_build_id[SW_BUILD_ZCL_BUF_LEN];
+static uint8_t       s_init_fail_count = 0;
+#define INIT_FAIL_MAX  5  /* Reboot after this many consecutive init failures */
 
 #define PAIRING_TIMEOUT_MS      60000   /* Auto-cancel pairing after 60 s */
 #define REJOIN_BACKOFF_INIT_MS  1000    /* First rejoin attempt after 1 s  */
 #define REJOIN_BACKOFF_MAX_MS   300000  /* Cap backoff at 5 minutes        */
+
+/* Flap watchdog: if we have to rejoin too many times in a short window,
+ * the radio link is unstable enough that the ZBOSS MAC layer can hit an
+ * internal assertion (mac/mac.c). Reboot proactively before that happens. */
+#define REJOIN_FLAP_WINDOW_MS   300000  /* 5-minute sliding window         */
+#define REJOIN_FLAP_LIMIT       10      /* Rejoins allowed inside window   */
+#define STABLE_UPTIME_MS        60000   /* Connected for >= this           */
+                                        /*   = considered "stable"         */
+static TickType_t s_flap_window_start  = 0;
+static uint16_t   s_flap_rejoin_count  = 0;
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -121,11 +135,41 @@ static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask);
 
 static void schedule_rejoin(void)
 {
+    TickType_t now = xTaskGetTickCount();
+
+    /* Sliding-window flap detector. If the radio link is so bad that we
+     * keep cycling parent-link-failure -> rejoin, the ZBOSS MAC layer
+     * eventually asserts in mac/mac.c. Reboot ourselves first so we come
+     * back clean instead of crashing inside the stack. */
+    if (s_flap_rejoin_count == 0 ||
+        (now - s_flap_window_start) > pdMS_TO_TICKS(REJOIN_FLAP_WINDOW_MS)) {
+        s_flap_window_start = now;
+        s_flap_rejoin_count = 0;
+    }
+    s_flap_rejoin_count++;
+    if (s_flap_rejoin_count > REJOIN_FLAP_LIMIT) {
+        ESP_LOGE(TAG, "Rejoin flap watchdog tripped (%u rejoins in %u ms) – rebooting",
+                 (unsigned)s_flap_rejoin_count,
+                 (unsigned)REJOIN_FLAP_WINDOW_MS);
+        esp_restart();
+    }
+
     if (!s_rejoining) {
         s_rejoining = true;
-        s_rejoin_backoff_ms = REJOIN_BACKOFF_INIT_MS;
+        /* Only reset backoff if we previously had a stable connection.
+         * Otherwise keep growing it so a flapping parent doesn't make us
+         * hammer NETWORK_STEERING every second. */
+        if (s_last_join_tick != 0 &&
+            (now - s_last_join_tick) >= pdMS_TO_TICKS(STABLE_UPTIME_MS)) {
+            s_rejoin_backoff_ms = REJOIN_BACKOFF_INIT_MS;
+        } else if (s_rejoin_backoff_ms == 0) {
+            s_rejoin_backoff_ms = REJOIN_BACKOFF_INIT_MS;
+        }
     }
-    ESP_LOGW(TAG, "Scheduling rejoin in %lu ms", (unsigned long)s_rejoin_backoff_ms);
+    ESP_LOGW(TAG, "Scheduling rejoin in %lu ms (flap %u/%u)",
+             (unsigned long)s_rejoin_backoff_ms,
+             (unsigned)s_flap_rejoin_count,
+             (unsigned)REJOIN_FLAP_LIMIT);
     esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb,
                            ESP_ZB_BDB_MODE_NETWORK_STEERING, s_rejoin_backoff_ms);
     s_rejoin_backoff_ms *= 2;
@@ -165,13 +209,17 @@ static bool consume_pairing_flag(void)
 
 /* ── ZED configuration macros (matching Espressif examples) ──────────── */
 
+/* keep_alive: how often (ms) the ZED data-polls its parent.
+ * 3 s is aggressive: two missed polls and the NWK layer raises
+ * PARENT_LINK_FAILURE. On marginal RF that triggers a flap loop and
+ * eventually a MAC assertion. 7 s gives the link more headroom. */
 #define AIRCUBE_ZED_CONFIG()                                \
     {                                                       \
         .esp_zb_role = ESP_ZB_DEVICE_TYPE_ED,               \
         .install_code_policy = false,                       \
         .nwk_cfg.zed_cfg = {                                \
             .ed_timeout = ESP_ZB_ED_AGING_TIMEOUT_64MIN,    \
-            .keep_alive = 3000,                             \
+            .keep_alive = 7000,                             \
         },                                                  \
     }
 
@@ -210,6 +258,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (err_status == ESP_OK) {
+            s_init_fail_count = 0;
             ESP_LOGI(TAG, "Device started up in%s factory-reset mode",
                      esp_zb_bdb_is_factory_new() ? "" : " non");
             if (esp_zb_bdb_is_factory_new()) {
@@ -223,11 +272,20 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                 }
             } else {
                 ESP_LOGI(TAG, "Device rebooted – already commissioned");
-                s_connected = true;
+                s_connected      = true;
+                s_rejoining      = false;
+                s_last_join_tick = xTaskGetTickCount();
+                s_rejoin_backoff_ms = REJOIN_BACKOFF_INIT_MS;
             }
         } else {
-            ESP_LOGI(TAG, "Waiting for coordinator (%s), retrying",
-                     esp_err_to_name(err_status));
+            s_init_fail_count++;
+            if (s_init_fail_count >= INIT_FAIL_MAX) {
+                ESP_LOGE(TAG, "Zigbee init failed %d times – rebooting to reset radio",
+                         s_init_fail_count);
+                esp_restart();
+            }
+            ESP_LOGI(TAG, "Waiting for coordinator (%s), attempt %d/%d, retrying",
+                     esp_err_to_name(err_status), s_init_fail_count, INIT_FAIL_MAX);
             esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb,
                                    ESP_ZB_BDB_MODE_INITIALIZATION, 1000);
         }
@@ -244,10 +302,13 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                      extended_pan_id[1], extended_pan_id[0],
                      esp_zb_get_pan_id(), esp_zb_get_current_channel(),
                      esp_zb_get_short_address());
-            s_connected  = true;
-            s_pairing    = false;
-            s_rejoining  = false;
-            s_rejoin_backoff_ms = REJOIN_BACKOFF_INIT_MS;
+            s_connected     = true;
+            s_pairing       = false;
+            s_rejoining     = false;
+            s_last_join_tick = xTaskGetTickCount();
+            /* Note: we deliberately don't reset s_rejoin_backoff_ms here.
+             * schedule_rejoin() will reset it only after we've been
+             * connected long enough to count as a stable uptime. */
         } else {
             if (s_pairing &&
                 (xTaskGetTickCount() - s_pairing_start) < pdMS_TO_TICKS(PAIRING_TIMEOUT_MS)) {
@@ -298,9 +359,11 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_TC_REJOIN_DONE:
         if (err_status == ESP_OK) {
             ESP_LOGI(TAG, "Trust Center rejoin succeeded");
-            s_connected  = true;
-            s_rejoining  = false;
-            s_rejoin_backoff_ms = REJOIN_BACKOFF_INIT_MS;
+            s_connected      = true;
+            s_rejoining      = false;
+            s_last_join_tick = xTaskGetTickCount();
+            /* Backoff stays as-is; schedule_rejoin() will reset only after
+             * a stable uptime. */
         } else {
             ESP_LOGW(TAG, "Trust Center rejoin failed (%s)", esp_err_to_name(err_status));
             s_connected = false;
@@ -605,8 +668,11 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc, in
     uint16_t zb_etvoc = (uint16_t)etvoc;
     uint16_t zb_aqi   = (uint16_t)aqi;
 
-    /* Lock the Zigbee stack while writing attributes */
-    esp_zb_lock_acquire(portMAX_DELAY);
+    /* Bounded lock: avoid blocking sensor_task forever if the stack is stuck */
+    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
+        ESP_LOGW(TAG, "Zigbee lock timeout in update_sensors – skipping this cycle");
+        return;
+    }
 
     /* Standard clusters */
     esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
@@ -660,7 +726,11 @@ void zigbee_start_pairing(void)
     s_connected     = false;
     s_pairing_start = xTaskGetTickCount();
 
-    esp_zb_lock_acquire(portMAX_DELAY);
+    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(5000))) {
+        ESP_LOGE(TAG, "Zigbee lock timeout in start_pairing – aborting");
+        s_pairing = false;
+        return;
+    }
     if (esp_zb_bdb_is_factory_new()) {
         ESP_LOGI(TAG, "Already factory-new – starting network steering directly");
         esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
