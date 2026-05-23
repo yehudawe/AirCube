@@ -192,7 +192,7 @@ static void button_task(void *pvParameters)
                         led_set_intensity(new_brightness);
                         save_brightness_to_nvs(current_brightness_index);
                         zigbee_report_brightness();
-                        
+
                         ESP_LOGI(TAG, "Short press – Brightness set to %.1f", new_brightness);
                     }
                 }

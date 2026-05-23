@@ -1,43 +1,35 @@
 /**
- * Zigbee2MQTT External Converter for AirCube (Z2M 1.x)
+ * Zigbee2MQTT External Converter for AirCube (Z2M 2.x)
  *
- * This file uses CommonJS format for Z2M 1.x. For Z2M 2.x, use aircube.mjs instead.
+ * Z2M 2.x requires ES module format (.mjs). For Z2M 1.x, use aircube.js instead.
  *
- * Place this file in your Zigbee2MQTT data directory and reference it
- * in configuration.yaml:
+ * Place this file in your Zigbee2MQTT external_converters directory and
+ * reference it in configuration.yaml:
  *
  *   external_converters:
- *     - aircube.js
+ *     - external_converters/aircube.mjs
  *
  * Standard clusters (auto-handled by Z2M):
  *   - Temperature Measurement (0x0402)
  *   - Relative Humidity (0x0405)
  *
- * Custom cluster 0xFC01 attributes (read-only sensors):
- *   0x0000 = eCO2       (uint16, ppm)
- *   0x0001 = eTVOC      (uint16, ppb)
- *   0x0002 = AQI-S      (uint16, legacy ENS161 relative AQI-S, 0-500)
- *   0x0003 = AQI        (uint16, canonical AirCube AQI, TVOC-derived, 0-400;
- *                        added in firmware 1.5.0 - this is the value that
- *                        tracks the LED color)
- *
- * Analog Output cluster 0x000D (writable):
- *   0x0055 = presentValue (float, 0-100 brightness)
+ * Custom cluster 0xFC01 attributes:
+ *   0x0000 = eCO2  (uint16, ppm)
+ *   0x0001 = eTVOC (uint16, ppb)
+ *   0x0002 = AQI   (uint16, index)
  */
 
-const {temperature, humidity} = require('zigbee-herdsman-converters/lib/modernExtend');
-const fz = require('zigbee-herdsman-converters/converters/fromZigbee');
-const exposes = require('zigbee-herdsman-converters/lib/exposes');
+import {temperature, humidity} from 'zigbee-herdsman-converters/lib/modernExtend';
+import * as exposes from 'zigbee-herdsman-converters/lib/exposes';
+
 const e = exposes.presets;
 
-const CUSTOM_CLUSTER_ID = 0xFC01;
+// Z2M 2.x requires the cluster ID as a string for custom (non-standard) clusters.
+const CUSTOM_CLUSTER_ID = '64513'; // 0xFC01
+
 const ATTR_ECO2  = 0x0000;
 const ATTR_ETVOC = 0x0001;
-const ATTR_AQI_S = 0x0002;   // legacy ENS161 AQI-S (0-500)
-const ATTR_AQI   = 0x0003;   // canonical AirCube AQI (TVOC-derived, 0-400)
-
-const ANALOG_OUTPUT_CLUSTER = 'genAnalogOutput';
-const ATTR_PRESENT_VALUE = 0x0055;
+const ATTR_AQI   = 0x0002;
 
 const fzAirCubeAirQuality = {
     cluster: CUSTOM_CLUSTER_ID,
@@ -53,31 +45,29 @@ const fzAirCubeAirQuality = {
         if (msg.data.hasOwnProperty(ATTR_AQI)) {
             result.aqi = msg.data[ATTR_AQI];
         }
-        if (msg.data.hasOwnProperty(ATTR_AQI_S)) {
-            result.aqi_s = msg.data[ATTR_AQI_S];
-        }
         return result;
     },
 };
 
-const fzAirCubeBrightness = {
-    cluster: ANALOG_OUTPUT_CLUSTER,
+const fzBrightness = {
+    cluster: 'genAnalogOutput',
     type: ['attributeReport', 'readResponse'],
     convert: (model, msg, publish, options, meta) => {
         if (msg.data.hasOwnProperty('presentValue')) {
-            return {brightness: Math.round(msg.data.presentValue)};
+            return { brightness: Math.round(msg.data['presentValue']) };
         }
     },
 };
 
-const tzAirCubeBrightness = {
+const tzBrightness = {
     key: ['brightness'],
     convertSet: async (entity, key, value, meta) => {
-        await entity.write(ANALOG_OUTPUT_CLUSTER, {presentValue: value});
-        return {state: {brightness: value}};
+        const clamped = Math.min(100, Math.max(0, value));
+        await entity.write('genAnalogOutput', { presentValue: clamped });
+        return { state: { brightness: clamped } };
     },
     convertGet: async (entity, key, meta) => {
-        await entity.read(ANALOG_OUTPUT_CLUSTER, ['presentValue']);
+        await entity.read('genAnalogOutput', ['presentValue']);
     },
 };
 
@@ -90,12 +80,12 @@ const definition = {
         temperature(),
         humidity(),
     ],
-    fromZigbee: [fzAirCubeAirQuality, fzAirCubeBrightness],
-    toZigbee: [tzAirCubeBrightness],
+    fromZigbee: [fzAirCubeAirQuality, fzBrightness],
+    toZigbee: [tzBrightness],
     exposes: [
         e.numeric('eco2', exposes.access.STATE)
             .withUnit('ppm')
-            .withDescription('Equivalent CO2 concentration')
+            .withDescription('Equivalent carbon dioxide concentration')
             .withValueMin(400)
             .withValueMax(8192),
         e.numeric('voc', exposes.access.STATE)
@@ -105,23 +95,21 @@ const definition = {
             .withValueMax(65535),
         e.numeric('aqi', exposes.access.STATE)
             .withUnit('')
-            .withDescription('Air Quality Index (TVOC-derived, 0-400, tracks LED color)')
-            .withValueMin(0)
-            .withValueMax(400),
-        e.numeric('aqi_s', exposes.access.STATE)
-            .withUnit('')
-            .withDescription('Legacy ENS161 relative Air Quality Index (AQI-S, 0-500)')
+            .withDescription('Air Quality Index')
             .withValueMin(0)
             .withValueMax(500),
         e.numeric('brightness', exposes.access.ALL)
-            .withDescription('LED brightness')
+            .withUnit('%')
+            .withDescription('LED brightness (0-100)')
             .withValueMin(0)
             .withValueMax(100),
     ],
     configure: async (device, coordinatorEndpoint) => {
         const endpoint = device.getEndpoint(10);
+        /* Bind standard clusters */
         await endpoint.bind('msTemperatureMeasurement', coordinatorEndpoint);
         await endpoint.bind('msRelativeHumidity', coordinatorEndpoint);
+        /* Configure reporting for standard clusters */
         await endpoint.configureReporting('msTemperatureMeasurement', [{
             attribute: 'measuredValue', minimumReportInterval: 1,
             maximumReportInterval: 60, reportableChange: 50,
@@ -130,7 +118,13 @@ const definition = {
             attribute: 'measuredValue', minimumReportInterval: 1,
             maximumReportInterval: 60, reportableChange: 100,
         }]);
+        /* Bind and configure reporting for brightness */
+        await endpoint.bind('genAnalogOutput', coordinatorEndpoint);
+        await endpoint.configureReporting('genAnalogOutput', [{
+            attribute: 'presentValue', minimumReportInterval: 1,
+            maximumReportInterval: 60, reportableChange: 5,
+        }]);
     },
 };
 
-module.exports = definition;
+export default definition;

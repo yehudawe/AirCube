@@ -26,7 +26,6 @@
 #include "esp_check.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
-#include "esp_system.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_zigbee_core.h"
@@ -72,8 +71,6 @@ static TickType_t    s_pairing_start = 0;
 static TickType_t    s_last_join_tick = 0;       /* When we most recently joined         */
 static uint32_t      s_rejoin_backoff_ms = 0;
 static uint8_t       s_sw_build_id[SW_BUILD_ZCL_BUF_LEN];
-static uint8_t       s_init_fail_count = 0;
-#define INIT_FAIL_MAX  5  /* Reboot after this many consecutive init failures */
 
 #define PAIRING_TIMEOUT_MS      60000   /* Auto-cancel pairing after 60 s */
 #define REJOIN_BACKOFF_INIT_MS  1000    /* First rejoin attempt after 1 s  */
@@ -269,7 +266,6 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (err_status == ESP_OK) {
-            s_init_fail_count = 0;
             ESP_LOGI(TAG, "Device started up in%s factory-reset mode",
                      esp_zb_bdb_is_factory_new() ? "" : " non");
             if (esp_zb_bdb_is_factory_new()) {
@@ -283,6 +279,9 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                 }
             } else {
                 ESP_LOGI(TAG, "Device rebooted – already commissioned");
+                s_connected = true;
+                esp_zb_scheduler_alarm((esp_zb_callback_t)report_startup_brightness_cb,
+                                       0, STARTUP_REPORT_DELAY_MS);
                 s_connected      = true;
                 s_rejoining      = false;
                 s_last_join_tick = xTaskGetTickCount();
@@ -291,14 +290,8 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                                        0, STARTUP_REPORT_DELAY_MS);
             }
         } else {
-            s_init_fail_count++;
-            if (s_init_fail_count >= INIT_FAIL_MAX) {
-                ESP_LOGE(TAG, "Zigbee init failed %d times – rebooting to reset radio",
-                         s_init_fail_count);
-                esp_restart();
-            }
-            ESP_LOGI(TAG, "Waiting for coordinator (%s), attempt %d/%d, retrying",
-                     esp_err_to_name(err_status), s_init_fail_count, INIT_FAIL_MAX);
+            ESP_LOGI(TAG, "Waiting for coordinator (%s), retrying",
+                     esp_err_to_name(err_status));
             esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb,
                                    ESP_ZB_BDB_MODE_INITIALIZATION, 1000);
         }
@@ -727,11 +720,8 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
     uint16_t zb_aqi   = (uint16_t)aqi;       /* canonical AirCube AQI (TVOC-derived) */
     uint16_t zb_aqi_s = (uint16_t)aqi_s;     /* legacy ENS161 AQI-S */
 
-    /* Bounded lock: avoid blocking sensor_task forever if the stack is stuck */
-    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
-        ESP_LOGW(TAG, "Zigbee lock timeout in update_sensors – skipping this cycle");
-        return;
-    }
+    /* Lock the Zigbee stack while writing attributes */
+    esp_zb_lock_acquire(portMAX_DELAY);
 
     /* Standard clusters */
     esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
@@ -804,7 +794,6 @@ void zigbee_report_brightness(void)
     if (!s_connected) {
         return;
     }
-
     float zb_brightness = current_brightness_percent();
     if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
         ESP_LOGW(TAG, "Zigbee lock timeout in report_brightness – skipping");
@@ -825,11 +814,7 @@ void zigbee_start_pairing(void)
     s_connected     = false;
     s_pairing_start = xTaskGetTickCount();
 
-    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(5000))) {
-        ESP_LOGE(TAG, "Zigbee lock timeout in start_pairing – aborting");
-        s_pairing = false;
-        return;
-    }
+    esp_zb_lock_acquire(portMAX_DELAY);
     if (esp_zb_bdb_is_factory_new()) {
         ESP_LOGI(TAG, "Already factory-new – starting network steering directly");
         esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
