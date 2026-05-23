@@ -26,14 +26,15 @@ class AirQualityCluster(CustomCluster):
         etvoc = ZCLAttributeDef(
             id=0x0001, type=t.uint16_t, is_manufacturer_specific=False
         )
-        # Legacy ENS161 relative AQI-S (0-500). Kept on attribute 0x0002 so
-        # existing Home Assistant / Zigbee2MQTT installs continue to work.
-        aqi_s = ZCLAttributeDef(
+        # MUST stay named "aqi" at 0x0002 — matches every firmware version and the
+        # original quirk entity binding. Pre-1.5.0 firmware reports AQI-S here; 1.5.0+
+        # still writes AQI-S to this attribute ID for backward compatibility.
+        aqi = ZCLAttributeDef(
             id=0x0002, type=t.uint16_t, is_manufacturer_specific=False
         )
-        # Canonical AirCube AQI (TVOC-derived, 0-400) added in firmware 1.5.0.
-        # This is the value that tracks the LED color.
-        aqi = ZCLAttributeDef(
+        # TVOC-derived AQI (0-400) on a new attribute ID in firmware 1.5.0+.
+        # Use a distinct attribute name so we never steal "aqi" from 0x0002.
+        aqi_tvoc = ZCLAttributeDef(
             id=0x0003, type=t.uint16_t, is_manufacturer_specific=False
         )
 
@@ -59,23 +60,23 @@ ANALOG_OUTPUT_CLUSTER_ID = 0x000D
         unit="ppb",
         device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
         state_class=SensorStateClass.MEASUREMENT,
-        fallback_name="Volatile organic compounds",
+        fallback_name="tVOC",
     )
     .sensor(
         AirQualityCluster.AttributeDefs.aqi.name,
         AirQualityCluster.cluster_id,
         endpoint_id=10,
-        device_class=SensorDeviceClass.AQI,
-        state_class=SensorStateClass.MEASUREMENT,
-        fallback_name="Air quality index",
-    )
-    .sensor(
-        AirQualityCluster.AttributeDefs.aqi_s.name,
-        AirQualityCluster.cluster_id,
-        endpoint_id=10,
         translation_key="aqi_s",
         state_class=SensorStateClass.MEASUREMENT,
-        fallback_name="Air quality index (relative, AQI-S)",
+        fallback_name="AQI-S (relative)",
+    )
+    .sensor(
+        AirQualityCluster.AttributeDefs.aqi_tvoc.name,
+        AirQualityCluster.cluster_id,
+        endpoint_id=10,
+        translation_key="aqi_tvoc",
+        state_class=SensorStateClass.MEASUREMENT,
+        fallback_name="AQI (TVOC)",
     )
     .number(
         "present_value",
