@@ -26,8 +26,15 @@ class AirQualityCluster(CustomCluster):
         etvoc = ZCLAttributeDef(
             id=0x0001, type=t.uint16_t, is_manufacturer_specific=False
         )
-        aqi = ZCLAttributeDef(
+        # Legacy ENS161 relative AQI-S (0-500). Kept on attribute 0x0002 so
+        # existing Home Assistant / Zigbee2MQTT installs continue to work.
+        aqi_s = ZCLAttributeDef(
             id=0x0002, type=t.uint16_t, is_manufacturer_specific=False
+        )
+        # Canonical AirCube AQI (TVOC-derived, 0-400) added in firmware 1.5.0.
+        # This is the value that tracks the LED color.
+        aqi = ZCLAttributeDef(
+            id=0x0003, type=t.uint16_t, is_manufacturer_specific=False
         )
 
 
@@ -61,6 +68,14 @@ ANALOG_OUTPUT_CLUSTER_ID = 0x000D
         device_class=SensorDeviceClass.AQI,
         state_class=SensorStateClass.MEASUREMENT,
         fallback_name="Air quality index",
+    )
+    .sensor(
+        AirQualityCluster.AttributeDefs.aqi_s.name,
+        AirQualityCluster.cluster_id,
+        endpoint_id=10,
+        translation_key="aqi_s",
+        state_class=SensorStateClass.MEASUREMENT,
+        fallback_name="Air quality index (relative, AQI-S)",
     )
     .number(
         "present_value",

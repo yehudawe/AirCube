@@ -10,7 +10,7 @@
  *   - Identify (0x0003)          : Standard identify
  *   - Temperature Meas (0x0402)  : Actual temperature in 0.01 C
  *   - Humidity Meas (0x0405)     : Actual humidity in 0.01 %
- *   - Custom (0xFC01)            : eCO2, eTVOC, AQI
+ *   - Custom (0xFC01)            : eCO2, eTVOC, AQI-S, AQI
  *   - Analog Output (0x000D)     : LED brightness (0-100)
  *
  * @author StuckAtPrototype, LLC
@@ -26,7 +26,6 @@
 #include "esp_check.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
-#include "esp_system.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_zigbee_core.h"
@@ -43,7 +42,11 @@ static const char *TAG = "zigbee";
 #define CUSTOM_CLUSTER_ID           0xFC01
 #define ATTR_ECO2_ID                0x0000   /* uint16 – ppm   */
 #define ATTR_ETVOC_ID               0x0001   /* uint16 – ppb   */
-#define ATTR_AQI_ID                 0x0002   /* uint16 – index */
+#define ATTR_AQI_S_ID               0x0002   /* uint16 – legacy ENS161 AQI-S (0-500),
+                                                 kept on the original ID for backward
+                                                 compatibility with HA / Zigbee2MQTT  */
+#define ATTR_AQI_ID                 0x0003   /* uint16 – canonical AirCube AQI,
+                                                 TVOC-derived (0-400)                  */
 
 /* Analog Output cluster (0x000D) for brightness – standard cluster so
    ZCL Write Attributes from coordinators is handled natively by ZBOSS. */
@@ -68,12 +71,11 @@ static TickType_t    s_pairing_start = 0;
 static TickType_t    s_last_join_tick = 0;       /* When we most recently joined         */
 static uint32_t      s_rejoin_backoff_ms = 0;
 static uint8_t       s_sw_build_id[SW_BUILD_ZCL_BUF_LEN];
-static uint8_t       s_init_fail_count = 0;
-#define INIT_FAIL_MAX  5  /* Reboot after this many consecutive init failures */
 
 #define PAIRING_TIMEOUT_MS      60000   /* Auto-cancel pairing after 60 s */
 #define REJOIN_BACKOFF_INIT_MS  1000    /* First rejoin attempt after 1 s  */
 #define REJOIN_BACKOFF_MAX_MS   300000  /* Cap backoff at 5 minutes        */
+#define STARTUP_REPORT_DELAY_MS 1000  /* Allow coordinator to finish startup */
 
 /* Flap watchdog: if we have to rejoin too many times in a short window,
  * the radio link is unstable enough that the ZBOSS MAC layer can hit an
@@ -111,6 +113,11 @@ static void init_sw_build_id(void)
     memcpy(&s_sw_build_id[1], app_desc->version, n);
 }
 
+static float current_brightness_percent(void)
+{
+    return led_get_intensity() * 100.0f;
+}
+
 static void report_attr(uint16_t cluster_id, uint16_t attr_id)
 {
     esp_zb_zcl_report_attr_cmd_t report_cmd = { 0 };
@@ -130,6 +137,7 @@ static void report_attr(uint16_t cluster_id, uint16_t attr_id)
 /* ── Forward declarations ─────────────────────────────────────────────── */
 
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask);
+static void report_startup_brightness_cb(uint8_t unused);
 
 /* ── Rejoin helper (exponential backoff) ──────────────────────────────── */
 
@@ -258,7 +266,6 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (err_status == ESP_OK) {
-            s_init_fail_count = 0;
             ESP_LOGI(TAG, "Device started up in%s factory-reset mode",
                      esp_zb_bdb_is_factory_new() ? "" : " non");
             if (esp_zb_bdb_is_factory_new()) {
@@ -272,20 +279,19 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                 }
             } else {
                 ESP_LOGI(TAG, "Device rebooted – already commissioned");
+                s_connected = true;
+                esp_zb_scheduler_alarm((esp_zb_callback_t)report_startup_brightness_cb,
+                                       0, STARTUP_REPORT_DELAY_MS);
                 s_connected      = true;
                 s_rejoining      = false;
                 s_last_join_tick = xTaskGetTickCount();
                 s_rejoin_backoff_ms = REJOIN_BACKOFF_INIT_MS;
+                esp_zb_scheduler_alarm((esp_zb_callback_t)report_startup_brightness_cb,
+                                       0, STARTUP_REPORT_DELAY_MS);
             }
         } else {
-            s_init_fail_count++;
-            if (s_init_fail_count >= INIT_FAIL_MAX) {
-                ESP_LOGE(TAG, "Zigbee init failed %d times – rebooting to reset radio",
-                         s_init_fail_count);
-                esp_restart();
-            }
-            ESP_LOGI(TAG, "Waiting for coordinator (%s), attempt %d/%d, retrying",
-                     esp_err_to_name(err_status), s_init_fail_count, INIT_FAIL_MAX);
+            ESP_LOGI(TAG, "Waiting for coordinator (%s), retrying",
+                     esp_err_to_name(err_status));
             esp_zb_scheduler_alarm((esp_zb_callback_t)bdb_start_top_level_commissioning_cb,
                                    ESP_ZB_BDB_MODE_INITIALIZATION, 1000);
         }
@@ -309,6 +315,8 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             /* Note: we deliberately don't reset s_rejoin_backoff_ms here.
              * schedule_rejoin() will reset it only after we've been
              * connected long enough to count as a stable uptime. */
+            esp_zb_scheduler_alarm((esp_zb_callback_t)report_startup_brightness_cb,
+                                   0, STARTUP_REPORT_DELAY_MS);
         } else {
             if (s_pairing &&
                 (xTaskGetTickCount() - s_pairing_start) < pdMS_TO_TICKS(PAIRING_TIMEOUT_MS)) {
@@ -423,7 +431,7 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
         esp_zb_humidity_meas_cluster_create(&hum_cfg),
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
 
-    /* ---- Custom cluster 0xFC01 (eCO2, eTVOC, AQI) ---- */
+    /* ---- Custom cluster 0xFC01 (eCO2, eTVOC, AQI-S, AQI) ---- */
     esp_zb_attribute_list_t *custom_cluster = esp_zb_zcl_attr_list_create(CUSTOM_CLUSTER_ID);
 
     uint16_t default_val = 0;
@@ -438,6 +446,13 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
         ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
         &default_val));
 
+    /* Legacy ENS161 AQI-S - kept on attr 0x0002 for HA/Z2M compatibility. */
+    ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
+        ATTR_AQI_S_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
+        ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
+        &default_val));
+
+    /* Canonical AirCube AQI (TVOC-derived) on a new attribute. */
     ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
         ATTR_AQI_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
         ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
@@ -449,7 +464,7 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
     /* ---- Analog Output cluster 0x000D (brightness, writable) ---- */
     esp_zb_analog_output_cluster_cfg_t ao_cfg = {
         .out_of_service = false,
-        .present_value  = 60.0f,
+        .present_value  = current_brightness_percent(),
         .status_flags   = 0,
     };
     esp_zb_attribute_list_t *ao_cluster =
@@ -532,7 +547,24 @@ static void configure_reporting(void)
     };
     esp_zb_zcl_update_reporting_info(&etvoc_rpt);
 
-    /* AQI: report every 60s max, or on 5-point change */
+    /* AQI-S (legacy ENS161): report every 60s max, or on 5-point change */
+    esp_zb_zcl_reporting_info_t aqi_s_rpt = {
+        .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+        .ep                 = AIRCUBE_ENDPOINT,
+        .cluster_id         = CUSTOM_CLUSTER_ID,
+        .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
+        .u.send_info.min_interval     = 1,
+        .u.send_info.max_interval     = 60,
+        .u.send_info.def_min_interval = 1,
+        .u.send_info.def_max_interval = 60,
+        .u.send_info.delta.u16        = 5,
+        .attr_id            = ATTR_AQI_S_ID,
+        .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
+    };
+    esp_zb_zcl_update_reporting_info(&aqi_s_rpt);
+
+    /* AQI (canonical, TVOC-derived): report every 60s max, or on 5-point change */
     esp_zb_zcl_reporting_info_t aqi_rpt = {
         .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
         .ep                 = AIRCUBE_ENDPOINT,
@@ -548,6 +580,24 @@ static void configure_reporting(void)
         .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
     };
     esp_zb_zcl_update_reporting_info(&aqi_rpt);
+
+    /* Brightness: report every 60s max, or on 5.0% change */
+    esp_zb_zcl_reporting_info_t brightness_rpt = {
+        .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+        .ep                 = AIRCUBE_ENDPOINT,
+        .cluster_id         = ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT,
+        .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
+        .u.send_info.min_interval     = 1,
+        .u.send_info.max_interval     = 60,
+        .u.send_info.def_min_interval = 1,
+        .u.send_info.def_max_interval = 60,
+        .attr_id            = ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID,
+        .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
+    };
+    float brightness_delta = 5.0f;
+    memcpy(&brightness_rpt.u.send_info.delta, &brightness_delta, sizeof(float));
+    esp_zb_zcl_update_reporting_info(&brightness_rpt);
 
 }
 
@@ -655,7 +705,8 @@ void zigbee_init(void)
     ESP_LOGI(TAG, "Zigbee initialized");
 }
 
-void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc, int aqi)
+void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
+                           int aqi, int aqi_s)
 {
     if (!s_connected) {
         return;     /* Don't update attributes until we've joined a network */
@@ -666,13 +717,11 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc, in
     uint16_t zb_hum   = humidity_to_zb(humidity);
     uint16_t zb_eco2  = (uint16_t)eco2;
     uint16_t zb_etvoc = (uint16_t)etvoc;
-    uint16_t zb_aqi   = (uint16_t)aqi;
+    uint16_t zb_aqi   = (uint16_t)aqi;       /* canonical AirCube AQI (TVOC-derived) */
+    uint16_t zb_aqi_s = (uint16_t)aqi_s;     /* legacy ENS161 AQI-S */
 
-    /* Bounded lock: avoid blocking sensor_task forever if the stack is stuck */
-    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
-        ESP_LOGW(TAG, "Zigbee lock timeout in update_sensors – skipping this cycle");
-        return;
-    }
+    /* Lock the Zigbee stack while writing attributes */
+    esp_zb_lock_acquire(portMAX_DELAY);
 
     /* Standard clusters */
     esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
@@ -694,10 +743,14 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc, in
 
     esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
         CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ATTR_AQI_S_ID, &zb_aqi_s, false);
+
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ATTR_AQI_ID, &zb_aqi, false);
 
     /* Sync current brightness to Analog Output cluster (covers button changes) */
-    float zb_brightness = led_get_intensity() * 100.0f;
+    float zb_brightness = current_brightness_percent();
     esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
         ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
@@ -709,6 +762,7 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc, in
                 ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_ECO2_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_ETVOC_ID);
+    report_attr(CUSTOM_CLUSTER_ID, ATTR_AQI_S_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_AQI_ID);
 
     esp_zb_lock_release();
@@ -719,6 +773,40 @@ bool zigbee_is_connected(void)
     return s_connected;
 }
 
+static void report_startup_brightness_cb(uint8_t unused)
+{
+    (void)unused;
+
+    if (!s_connected) {
+        return;
+    }
+
+    float zb_brightness = current_brightness_percent();
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
+    report_attr(ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT,
+                ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID);
+}
+
+void zigbee_report_brightness(void)
+{
+    if (!s_connected) {
+        return;
+    }
+    float zb_brightness = current_brightness_percent();
+    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
+        ESP_LOGW(TAG, "Zigbee lock timeout in report_brightness – skipping");
+        return;
+    }
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
+    report_attr(ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT,
+                ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID);
+    esp_zb_lock_release();
+}
+
 void zigbee_start_pairing(void)
 {
     ESP_LOGI(TAG, "Manual pairing requested");
@@ -726,11 +814,7 @@ void zigbee_start_pairing(void)
     s_connected     = false;
     s_pairing_start = xTaskGetTickCount();
 
-    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(5000))) {
-        ESP_LOGE(TAG, "Zigbee lock timeout in start_pairing – aborting");
-        s_pairing = false;
-        return;
-    }
+    esp_zb_lock_acquire(portMAX_DELAY);
     if (esp_zb_bdb_is_factory_new()) {
         ESP_LOGI(TAG, "Already factory-new – starting network steering directly");
         esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
