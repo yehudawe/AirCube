@@ -73,16 +73,21 @@ static const uint16_t BAND_HUES[5] = {
     HUE_RED    // Level 4 - Poor / Unhealthy edge   (TVOC 2200 / eCO2 2000)
 };
 
-// AQI values at each TVOC band edge. Mirrors BAND_HUES[] one-for-one:
-// flat 0 plateau across the Excellent band (matches the green plateau in the
-// LED), then a linear ramp to 400 across levels 1..4. Driven by TVOC alone;
-// eCO2 is reported separately as raw ppm.
-static const uint16_t BAND_AQI_TVOC[5] = {
-    0,    // Level 0 - deep clean
-    0,    // Level 1 - Excellent / Good edge   (TVOC 65 ppb) -> plateau
-    133,  // Level 2 - Good / Moderate edge    (TVOC 220 ppb)
-    266,  // Level 3 - Moderate / Poor edge    (TVOC 660 ppb)
-    400   // Level 4 - Poor / Unhealthy edge   (TVOC 2200 ppb)
+// AQI values at each TVOC band edge (matches published AQI/VOC table):
+//   0-65 ppb      -> AQI 0-15   (Excellent)
+//   65-220 ppb    -> AQI 15-50  (Good)
+//   220-650 ppb   -> AQI 50-100 (Moderate)
+//   650-2200 ppb  -> AQI 100-200 (Poor)
+//   2200-5500 ppb -> AQI 200-500 (Unhealthy)
+// Driven by TVOC alone; eCO2 is reported separately as raw ppm.
+static const int AQI_TVOC_THRESHOLDS_PPB[5] = { 65, 220, 650, 2200, 5500 };
+static const uint16_t BAND_AQI_TVOC[6] = {
+    0,    // Level 0 - 0 ppb
+    15,   // Level 1 - Excellent / Good edge   (65 ppb)
+    50,   // Level 2 - Good / Moderate edge    (220 ppb)
+    100,  // Level 3 - Moderate / Poor edge    (650 ppb)
+    200,  // Level 4 - Poor / Unhealthy edge   (2200 ppb)
+    500   // Level 5 - Unhealthy cap           (5500 ppb)
 };
 
 // Global variables to store sensor data for LED color mapping
@@ -227,35 +232,67 @@ static uint16_t aqi_fixed_to_hue(int eco2, int etvoc)
 }
 
 /**
+ * @brief Map TVOC ppb to a continuous AQI level position 0.0..5.0
+ *
+ * Uses AQI_TVOC_THRESHOLDS_PPB (65, 220, 650, 2200, 5500 ppb).
+ */
+static float aqi_tvoc_to_level_pos(int value)
+{
+    if (value <= 0) {
+        return 0.0f;
+    }
+    if (value >= AQI_TVOC_THRESHOLDS_PPB[4]) {
+        return 5.0f;
+    }
+    if (value < AQI_TVOC_THRESHOLDS_PPB[0]) {
+        return (float)value / (float)AQI_TVOC_THRESHOLDS_PPB[0];
+    }
+    for (int i = 0; i < 4; i++) {
+        if (value < AQI_TVOC_THRESHOLDS_PPB[i + 1]) {
+            float span = (float)(AQI_TVOC_THRESHOLDS_PPB[i + 1] - AQI_TVOC_THRESHOLDS_PPB[i]);
+            float frac = (float)(value - AQI_TVOC_THRESHOLDS_PPB[i]) / span;
+            return (float)(i + 1) + frac;
+        }
+    }
+    return 5.0f;
+}
+
+/**
  * @brief Compute the canonical AirCube AQI from TVOC.
  *
- * Mirrors the LED color mechanism: maps TVOC ppb to a continuous level
- * position in [0.0, 4.0] using the UBA TVOC bands, then linearly interpolates
- * BAND_AQI_TVOC[]. Result is a uint16 in [0, 400] with a flat 0 plateau
- * across the Excellent band (TVOC <= 65 ppb), matching the green plateau in
- * the LED color path.
- *
- * Note: this is intentionally TVOC-only. eCO2 is reported separately as raw
- * ppm; the color path still uses the worst-of-two over both sensors.
+ * Maps TVOC ppb to AQI 0-500 using fixed indoor-air bands (see BAND_AQI_TVOC).
+ * TVOC-only; eCO2 is reported separately. LED color still uses worst-of-two
+ * eCO2 + TVOC via aqi_fixed_to_hue().
  *
  * @param etvoc Equivalent TVOC in ppb
- * @return AQI value in [0, 400]
+ * @return AQI value in [0, 500]
  */
 static uint16_t aqi_calculate(int etvoc)
 {
-    float pos = value_to_level_pos(etvoc, TVOC_BAND_THRESHOLDS_PPB);
-    if (pos <= 0.0f) return BAND_AQI_TVOC[0];
-    if (pos >= 4.0f) return BAND_AQI_TVOC[4];
+    float pos = aqi_tvoc_to_level_pos(etvoc);
+    if (pos <= 0.0f) {
+        return BAND_AQI_TVOC[0];
+    }
+    if (pos >= 5.0f) {
+        return BAND_AQI_TVOC[5];
+    }
 
-    int low = (int)pos;                // 0..3
+    int low = (int)pos;
+    if (low > 4) {
+        low = 4;
+    }
     float frac = pos - (float)low;
 
     int32_t a_low  = (int32_t)BAND_AQI_TVOC[low];
     int32_t a_high = (int32_t)BAND_AQI_TVOC[low + 1];
     int32_t aqi = a_low + (int32_t)((a_high - a_low) * frac);
 
-    if (aqi < 0) aqi = 0;
-    if (aqi > 65535) aqi = 65535;
+    if (aqi < 0) {
+        aqi = 0;
+    }
+    if (aqi > 500) {
+        aqi = 500;
+    }
     return (uint16_t)aqi;
 }
 
@@ -358,7 +395,7 @@ void sensor_task(void *pvParameters)
         int etvoc = ens16x_read_etvoc();
         int eco2 = ens16x_read_eco2();
         int aqi_s = ens16x_read_aqi();         // ENS161 relative AQI-S (0-500)
-        int aqi = aqi_calculate(etvoc);        // Canonical AirCube AQI (TVOC-derived, 0-400)
+        int aqi = aqi_calculate(etvoc);        // Canonical AirCube AQI (TVOC-derived, 0-500)
         int aqi_uba = ens16x_read_aqi_uba();
         enum ENS_STATUS ens16x_status = ens16x_get_status();
 
@@ -412,7 +449,7 @@ void sensor_task(void *pvParameters)
         TickType_t now = xTaskGetTickCount();
         if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
             last_zb_update = now;
-            zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi, aqi_s);
+            zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi);
         }
 
         // Wait for configurable period before next reading

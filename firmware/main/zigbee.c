@@ -10,7 +10,7 @@
  *   - Identify (0x0003)          : Standard identify
  *   - Temperature Meas (0x0402)  : Actual temperature in 0.01 C
  *   - Humidity Meas (0x0405)     : Actual humidity in 0.01 %
- *   - Custom (0xFC01)            : eCO2, eTVOC, AQI-S, AQI
+ *   - Custom (0xFC01)            : eCO2, eTVOC, AQI (TVOC-derived)
  *   - Analog Output (0x000D)     : LED brightness (0-100)
  *
  * @author StuckAtPrototype, LLC
@@ -43,11 +43,7 @@ static const char *TAG = "zigbee";
 #define CUSTOM_CLUSTER_ID           0xFC01
 #define ATTR_ECO2_ID                0x0000   /* uint16 – ppm   */
 #define ATTR_ETVOC_ID               0x0001   /* uint16 – ppb   */
-#define ATTR_AQI_S_ID               0x0002   /* uint16 – legacy ENS161 AQI-S (0-500),
-                                                 kept on the original ID for backward
-                                                 compatibility with HA / Zigbee2MQTT  */
-#define ATTR_AQI_ID                 0x0003   /* uint16 – canonical AirCube AQI,
-                                                 TVOC-derived (0-400)                  */
+#define ATTR_AQI_ID                 0x0002   /* uint16 – TVOC-derived AQI (0-500)   */
 
 /* Analog Output cluster (0x000D) for brightness – standard cluster so
    ZCL Write Attributes from coordinators is handled natively by ZBOSS. */
@@ -438,7 +434,7 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
         esp_zb_humidity_meas_cluster_create(&hum_cfg),
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
 
-    /* ---- Custom cluster 0xFC01 (eCO2, eTVOC, AQI-S, AQI) ---- */
+    /* ---- Custom cluster 0xFC01 (eCO2, eTVOC, AQI) ---- */
     esp_zb_attribute_list_t *custom_cluster = esp_zb_zcl_attr_list_create(CUSTOM_CLUSTER_ID);
 
     uint16_t default_val = 0;
@@ -453,13 +449,6 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
         ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
         &default_val));
 
-    /* Legacy ENS161 AQI-S - kept on attr 0x0002 for HA/Z2M compatibility. */
-    ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
-        ATTR_AQI_S_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
-        ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
-        &default_val));
-
-    /* Canonical AirCube AQI (TVOC-derived) on a new attribute. */
     ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
         ATTR_AQI_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
         ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
@@ -554,24 +543,7 @@ static void configure_reporting(void)
     };
     esp_zb_zcl_update_reporting_info(&etvoc_rpt);
 
-    /* AQI-S (legacy ENS161): report every 60s max, or on 5-point change */
-    esp_zb_zcl_reporting_info_t aqi_s_rpt = {
-        .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
-        .ep                 = AIRCUBE_ENDPOINT,
-        .cluster_id         = CUSTOM_CLUSTER_ID,
-        .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
-        .u.send_info.min_interval     = 1,
-        .u.send_info.max_interval     = 60,
-        .u.send_info.def_min_interval = 1,
-        .u.send_info.def_max_interval = 60,
-        .u.send_info.delta.u16        = 5,
-        .attr_id            = ATTR_AQI_S_ID,
-        .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
-    };
-    esp_zb_zcl_update_reporting_info(&aqi_s_rpt);
-
-    /* AQI (canonical, TVOC-derived): report every 60s max, or on 5-point change */
+    /* AQI (TVOC-derived): report every 60s max, or on 5-point change */
     esp_zb_zcl_reporting_info_t aqi_rpt = {
         .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
         .ep                 = AIRCUBE_ENDPOINT,
@@ -713,7 +685,7 @@ void zigbee_init(void)
 }
 
 void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
-                           int aqi, int aqi_s)
+                           int aqi)
 {
     if (!s_connected) {
         return;     /* Don't update attributes until we've joined a network */
@@ -724,8 +696,7 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
     uint16_t zb_hum   = humidity_to_zb(humidity);
     uint16_t zb_eco2  = (uint16_t)eco2;
     uint16_t zb_etvoc = (uint16_t)etvoc;
-    uint16_t zb_aqi   = (uint16_t)aqi;       /* canonical AirCube AQI (TVOC-derived) */
-    uint16_t zb_aqi_s = (uint16_t)aqi_s;     /* legacy ENS161 AQI-S */
+    uint16_t zb_aqi   = (uint16_t)aqi;
 
     /* Lock the Zigbee stack while writing attributes */
     esp_zb_lock_acquire(portMAX_DELAY);
@@ -750,10 +721,6 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
 
     esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
         CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ATTR_AQI_S_ID, &zb_aqi_s, false);
-
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ATTR_AQI_ID, &zb_aqi, false);
 
     /* Sync current brightness to Analog Output cluster (covers button changes) */
@@ -769,7 +736,6 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
                 ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_ECO2_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_ETVOC_ID);
-    report_attr(CUSTOM_CLUSTER_ID, ATTR_AQI_S_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_AQI_ID);
 
     esp_zb_lock_release();

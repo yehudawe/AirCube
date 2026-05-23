@@ -10,10 +10,9 @@
  *     - aircube.js
  *
  * Custom cluster 0xFC01 attributes (matches zha/aircube.py):
- *   0x0000 = eco2     (uint16, ppm)
- *   0x0001 = etvoc    (uint16, ppb)
- *   0x0002 = aqi      (uint16, AQI-S relative, 0-500 — all firmware)
- *   0x0003 = aqi_tvoc (uint16, TVOC-derived AQI, 0-400 — firmware 1.5.0+)
+ *   0x0000 = eco2  (uint16, ppm)
+ *   0x0001 = etvoc (uint16, ppb)
+ *   0x0002 = aqi   (uint16, TVOC-derived AQI, 0-500)
  *
  * Analog Output cluster 0x000D (writable):
  *   presentValue (float, 0-100 brightness)
@@ -24,10 +23,9 @@ const exposes = require('zigbee-herdsman-converters/lib/exposes');
 const e = exposes.presets;
 
 const CUSTOM_CLUSTER_ID = 0xFC01;
-const ATTR_ECO2      = 0x0000;
-const ATTR_ETVOC     = 0x0001;
-const ATTR_AQI       = 0x0002;   // AQI-S (relative); wire name "aqi" in ZHA quirk
-const ATTR_AQI_TVOC  = 0x0003;   // TVOC-derived AQI (firmware 1.5.0+)
+const ATTR_ECO2  = 0x0000;
+const ATTR_ETVOC = 0x0001;
+const ATTR_AQI   = 0x0002;
 
 const ANALOG_OUTPUT_CLUSTER = 'genAnalogOutput';
 
@@ -43,10 +41,7 @@ const fzAirCubeAirQuality = {
             result.voc = msg.data[ATTR_ETVOC];
         }
         if (msg.data.hasOwnProperty(ATTR_AQI)) {
-            result.aqi_s = msg.data[ATTR_AQI];
-        }
-        if (msg.data.hasOwnProperty(ATTR_AQI_TVOC)) {
-            result.aqi_tvoc = msg.data[ATTR_AQI_TVOC];
+            result.aqi = msg.data[ATTR_AQI];
         }
         return result;
     },
@@ -95,16 +90,11 @@ const definition = {
             .withDescription('tVOC')
             .withValueMin(0)
             .withValueMax(65535),
-        e.numeric('aqi_s', exposes.access.STATE)
-            .withUnit('')
-            .withDescription('AQI-S (relative)')
-            .withValueMin(0)
-            .withValueMax(500),
-        e.numeric('aqi_tvoc', exposes.access.STATE)
+        e.numeric('aqi', exposes.access.STATE)
             .withUnit('')
             .withDescription('AQI (TVOC)')
             .withValueMin(0)
-            .withValueMax(400),
+            .withValueMax(500),
         e.numeric('brightness', exposes.access.ALL)
             .withDescription('Brightness')
             .withValueMin(0)
