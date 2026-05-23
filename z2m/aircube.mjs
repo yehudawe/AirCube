@@ -9,15 +9,11 @@
  *   external_converters:
  *     - external_converters/aircube.mjs
  *
- * Standard clusters (auto-handled by Z2M):
- *   - Temperature Measurement (0x0402)
- *   - Relative Humidity (0x0405)
- *
- * Custom cluster 0xFC01 attributes:
- *   0x0000 = eCO2   (uint16, ppm)
- *   0x0001 = eTVOC  (uint16, ppb)
- *   0x0002 = AQI-S  (uint16, legacy ENS161 relative AQI-S, 0-500)
- *   0x0003 = AQI    (uint16, canonical AirCube AQI, TVOC-derived, 0-400)
+ * Custom cluster 0xFC01 attributes (matches zha/aircube.py):
+ *   0x0000 = eco2     (uint16, ppm)
+ *   0x0001 = etvoc    (uint16, ppb)
+ *   0x0002 = aqi      (uint16, AQI-S relative, 0-500 — all firmware)
+ *   0x0003 = aqi_tvoc (uint16, TVOC-derived AQI, 0-400 — firmware 1.5.0+)
  */
 
 import {temperature, humidity} from 'zigbee-herdsman-converters/lib/modernExtend';
@@ -28,10 +24,10 @@ const e = exposes.presets;
 // Z2M 2.x requires the cluster ID as a string for custom (non-standard) clusters.
 const CUSTOM_CLUSTER_ID = '64513'; // 0xFC01
 
-const ATTR_ECO2  = 0x0000;
-const ATTR_ETVOC = 0x0001;
-const ATTR_AQI_S = 0x0002;   // legacy ENS161 AQI-S (0-500)
-const ATTR_AQI   = 0x0003;   // canonical AirCube AQI (TVOC-derived, 0-400)
+const ATTR_ECO2     = 0x0000;
+const ATTR_ETVOC    = 0x0001;
+const ATTR_AQI      = 0x0002;   // AQI-S (relative); wire name "aqi" in ZHA quirk
+const ATTR_AQI_TVOC = 0x0003;   // TVOC-derived AQI (firmware 1.5.0+)
 
 const fzAirCubeAirQuality = {
     cluster: CUSTOM_CLUSTER_ID,
@@ -45,10 +41,10 @@ const fzAirCubeAirQuality = {
             result.voc = msg.data[ATTR_ETVOC];
         }
         if (msg.data.hasOwnProperty(ATTR_AQI)) {
-            result.aqi = msg.data[ATTR_AQI];
+            result.aqi_s = msg.data[ATTR_AQI];
         }
-        if (msg.data.hasOwnProperty(ATTR_AQI_S)) {
-            result.aqi_s = msg.data[ATTR_AQI_S];
+        if (msg.data.hasOwnProperty(ATTR_AQI_TVOC)) {
+            result.aqi_tvoc = msg.data[ATTR_AQI_TVOC];
         }
         return result;
     },
@@ -90,36 +86,34 @@ const definition = {
     exposes: [
         e.numeric('eco2', exposes.access.STATE)
             .withUnit('ppm')
-            .withDescription('Equivalent carbon dioxide concentration')
+            .withDescription('Equivalent CO2')
             .withValueMin(400)
             .withValueMax(8192),
         e.numeric('voc', exposes.access.STATE)
             .withUnit('ppb')
-            .withDescription('Total volatile organic compounds')
+            .withDescription('tVOC')
             .withValueMin(0)
             .withValueMax(65535),
-        e.numeric('aqi', exposes.access.STATE)
-            .withUnit('')
-            .withDescription('Air Quality Index (TVOC-derived, 0-400, tracks LED color)')
-            .withValueMin(0)
-            .withValueMax(400),
         e.numeric('aqi_s', exposes.access.STATE)
             .withUnit('')
-            .withDescription('Legacy ENS161 relative Air Quality Index (AQI-S, 0-500)')
+            .withDescription('AQI-S (relative)')
             .withValueMin(0)
             .withValueMax(500),
+        e.numeric('aqi_tvoc', exposes.access.STATE)
+            .withUnit('')
+            .withDescription('AQI (TVOC)')
+            .withValueMin(0)
+            .withValueMax(400),
         e.numeric('brightness', exposes.access.ALL)
             .withUnit('%')
-            .withDescription('LED brightness (0-100)')
+            .withDescription('Brightness')
             .withValueMin(0)
             .withValueMax(100),
     ],
     configure: async (device, coordinatorEndpoint) => {
         const endpoint = device.getEndpoint(10);
-        /* Bind standard clusters */
         await endpoint.bind('msTemperatureMeasurement', coordinatorEndpoint);
         await endpoint.bind('msRelativeHumidity', coordinatorEndpoint);
-        /* Configure reporting for standard clusters */
         await endpoint.configureReporting('msTemperatureMeasurement', [{
             attribute: 'measuredValue', minimumReportInterval: 1,
             maximumReportInterval: 60, reportableChange: 50,
@@ -128,7 +122,6 @@ const definition = {
             attribute: 'measuredValue', minimumReportInterval: 1,
             maximumReportInterval: 60, reportableChange: 100,
         }]);
-        /* Bind and configure reporting for brightness */
         await endpoint.bind('genAnalogOutput', coordinatorEndpoint);
         await endpoint.configureReporting('genAnalogOutput', [{
             attribute: 'presentValue', minimumReportInterval: 1,
