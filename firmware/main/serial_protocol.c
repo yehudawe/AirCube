@@ -71,7 +71,7 @@ void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float h
     float temperature_f = temperature_c * 9.0f / 5.0f + 32.0f;
     
     // Format JSON output. Note: "aqi" is the canonical AirCube AQI
-    // (TVOC-derived, 0-400) starting in firmware 1.5.0. The previous AQI-S
+    // (TVOC-derived, 0-500) starting in firmware 1.5.0. The previous AQI-S
     // value moved to "aqi_s" - this is a breaking change for any consumer
     // that was reading "aqi" as AQI-S in older firmware.
     int len = snprintf(json_buffer, sizeof(json_buffer),

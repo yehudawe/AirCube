@@ -26,16 +26,8 @@ class AirQualityCluster(CustomCluster):
         etvoc = ZCLAttributeDef(
             id=0x0001, type=t.uint16_t, is_manufacturer_specific=False
         )
-        # MUST stay named "aqi" at 0x0002 — matches every firmware version and the
-        # original quirk entity binding. Pre-1.5.0 firmware reports AQI-S here; 1.5.0+
-        # still writes AQI-S to this attribute ID for backward compatibility.
         aqi = ZCLAttributeDef(
             id=0x0002, type=t.uint16_t, is_manufacturer_specific=False
-        )
-        # TVOC-derived AQI (0-400) on a new attribute ID in firmware 1.5.0+.
-        # Use a distinct attribute name so we never steal "aqi" from 0x0002.
-        aqi_tvoc = ZCLAttributeDef(
-            id=0x0003, type=t.uint16_t, is_manufacturer_specific=False
         )
 
 
@@ -66,15 +58,7 @@ ANALOG_OUTPUT_CLUSTER_ID = 0x000D
         AirQualityCluster.AttributeDefs.aqi.name,
         AirQualityCluster.cluster_id,
         endpoint_id=10,
-        translation_key="aqi_s",
-        state_class=SensorStateClass.MEASUREMENT,
-        fallback_name="AQI-S (relative)",
-    )
-    .sensor(
-        AirQualityCluster.AttributeDefs.aqi_tvoc.name,
-        AirQualityCluster.cluster_id,
-        endpoint_id=10,
-        translation_key="aqi_tvoc",
+        device_class=SensorDeviceClass.AQI,
         state_class=SensorStateClass.MEASUREMENT,
         fallback_name="AQI (TVOC)",
     )
