@@ -698,8 +698,11 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
     uint16_t zb_etvoc = (uint16_t)etvoc;
     uint16_t zb_aqi   = (uint16_t)aqi;
 
-    /* Lock the Zigbee stack while writing attributes */
-    esp_zb_lock_acquire(portMAX_DELAY);
+    /* Bounded lock: avoid blocking sensor_task forever if the stack is stuck */
+    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
+        ESP_LOGW(TAG, "Zigbee lock timeout in update_sensors – skipping this cycle");
+        return;
+    }
 
     /* Standard clusters */
     esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
