@@ -96,14 +96,6 @@ void zigbee_start_pairing(void);
  */
 bool zigbee_is_pairing(void);
 
-/**
- * @brief Immediately report the current LED brightness to the Zigbee coordinator.
- *
- * Writes the current brightness to the Analog Output cluster and sends
- * an unsolicited attribute report. Safe to call from any task context.
- */
-void zigbee_report_brightness(void);
-
 #ifdef __cplusplus
 }
 #endif
