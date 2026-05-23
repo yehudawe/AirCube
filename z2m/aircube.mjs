@@ -14,9 +14,10 @@
  *   - Relative Humidity (0x0405)
  *
  * Custom cluster 0xFC01 attributes:
- *   0x0000 = eCO2  (uint16, ppm)
- *   0x0001 = eTVOC (uint16, ppb)
- *   0x0002 = AQI   (uint16, index)
+ *   0x0000 = eCO2   (uint16, ppm)
+ *   0x0001 = eTVOC  (uint16, ppb)
+ *   0x0002 = AQI-S  (uint16, legacy ENS161 relative AQI-S, 0-500)
+ *   0x0003 = AQI    (uint16, canonical AirCube AQI, TVOC-derived, 0-400)
  */
 
 import {temperature, humidity} from 'zigbee-herdsman-converters/lib/modernExtend';
@@ -29,7 +30,8 @@ const CUSTOM_CLUSTER_ID = '64513'; // 0xFC01
 
 const ATTR_ECO2  = 0x0000;
 const ATTR_ETVOC = 0x0001;
-const ATTR_AQI   = 0x0002;
+const ATTR_AQI_S = 0x0002;   // legacy ENS161 AQI-S (0-500)
+const ATTR_AQI   = 0x0003;   // canonical AirCube AQI (TVOC-derived, 0-400)
 
 const fzAirCubeAirQuality = {
     cluster: CUSTOM_CLUSTER_ID,
@@ -44,6 +46,9 @@ const fzAirCubeAirQuality = {
         }
         if (msg.data.hasOwnProperty(ATTR_AQI)) {
             result.aqi = msg.data[ATTR_AQI];
+        }
+        if (msg.data.hasOwnProperty(ATTR_AQI_S)) {
+            result.aqi_s = msg.data[ATTR_AQI_S];
         }
         return result;
     },
@@ -95,7 +100,12 @@ const definition = {
             .withValueMax(65535),
         e.numeric('aqi', exposes.access.STATE)
             .withUnit('')
-            .withDescription('Air Quality Index')
+            .withDescription('Air Quality Index (TVOC-derived, 0-400, tracks LED color)')
+            .withValueMin(0)
+            .withValueMax(400),
+        e.numeric('aqi_s', exposes.access.STATE)
+            .withUnit('')
+            .withDescription('Legacy ENS161 relative Air Quality Index (AQI-S, 0-500)')
             .withValueMin(0)
             .withValueMax(500),
         e.numeric('brightness', exposes.access.ALL)
