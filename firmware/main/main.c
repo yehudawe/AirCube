@@ -32,8 +32,51 @@ static SemaphoreHandle_t readout_period_mutex = NULL;
 #define AQI_MAX 200
 #define AQI_GREEN_THRESHOLD 10  // Values 0-10 are pure green
 
+// ── AQI color mode selection (compile-time) ──
+// AQI_COLOR_MODE_FIXED  : New banded scheme, worst-of-two over eCO2 (UBA) + TVOC
+// AQI_COLOR_MODE_DYNAMIC: Legacy continuous green->red gradient from AQI-S
+#define AQI_COLOR_MODE_FIXED   0
+#define AQI_COLOR_MODE_DYNAMIC 1
+
+#ifndef AQI_COLOR_MODE
+#define AQI_COLOR_MODE AQI_COLOR_MODE_FIXED
+#endif
+
+// Fixed-mode band thresholds (upper bound of each level, exclusive of next).
+// 5 levels: 0=Excellent, 1=Good, 2=Moderate, 3=Poor, 4=Unhealthy.
+// Level N is reached when value >= thresholds[N-1].
+// TVOC table is in ppb (image is in ppm; 1 ppm = 1000 ppb).
+static const int TVOC_BAND_THRESHOLDS_PPB[4] = { 65, 220, 660, 2200 };
+// eCO2 thresholds (UBA-style, ppm).
+static const int ECO2_BAND_THRESHOLDS_PPM[4] = { 800, 1000, 1400, 2000 };
+
+// Hue values (0-65535, GRB via get_color_from_hue) at each integer band position.
+// The hue is a linear ramp from green (Excellent edge, level 1) down to red
+// (Unhealthy edge, level 4). Excellent (level 0..1) is a green plateau and
+// Unhealthy (>= level 4) is a red plateau, so:
+//   TVOC 0..65 ppb   -> green
+//   TVOC 2200+ ppb   -> red
+//   eCO2 < 800 ppm   -> green
+//   eCO2 >= 2000 ppm -> red
+// Intermediate band edges sit at perfectly linear interpolations
+// (HUE_GREEN * 2/3 and HUE_GREEN * 1/3) so the LED walks the full hue arc
+// uniformly between the green and red plateaus.
+#define HUE_GREEN  21845  // 120 deg - pure green
+#define HUE_LIME   14563  //  80 deg - 2/3 of HUE_GREEN (linear interp at L2)
+#define HUE_AMBER   7282  //  40 deg - 1/3 of HUE_GREEN (linear interp at L3)
+#define HUE_RED        0  //   0 deg - red
+static const uint16_t BAND_HUES[5] = {
+    HUE_GREEN, // Level 0 - deep clean (value = 0); same as L1 -> green plateau
+    HUE_GREEN, // Level 1 - Excellent / Good edge   (TVOC 65 / eCO2 800)
+    HUE_LIME,  // Level 2 - Good / Moderate edge    (TVOC 220 / eCO2 1000)
+    HUE_AMBER, // Level 3 - Moderate / Poor edge    (TVOC 660 / eCO2 1400)
+    HUE_RED    // Level 4 - Poor / Unhealthy edge   (TVOC 2200 / eCO2 2000)
+};
+
 // Global variables to store sensor data for LED color mapping
 static int current_aqi = 0;
+static int current_eco2 = 0;
+static int current_etvoc = 0;
 static enum ENS_STATUS current_ens16x_status = ENS_RESERVED;
 
 // Static variables for smooth LED color transitions
@@ -41,7 +84,6 @@ static float current_hue = 21845.0f;  // Current hue value (21845 = green, 0 = r
 static uint16_t target_hue = 21845;   // Target hue value we want to transition to
 #define TRANSITION_SPEED 0.02f  // Transition speed per update (0.0 to 1.0, higher = faster)
 // With 20ms update interval and 0.02 speed, full transition takes ~1 second (50 steps)
-#define HUE_GREEN 21845  // 2/6 of 65536 (120 degrees - green)
 
 // Getter and setter for sensor readout period (for serial_protocol.c)
 uint32_t get_sensor_readout_period_ms(void)
@@ -99,6 +141,77 @@ static uint16_t aqi_to_hue(int aqi)
     uint16_t hue = HUE_GREEN - (uint16_t)(ratio * HUE_GREEN);
     
     return hue;
+}
+
+/**
+ * @brief Map a sensor reading to a continuous level position 0.0..4.0
+ *
+ * Each integer value (0..4) corresponds to one of the band centers
+ * (Excellent, Good, Moderate, Poor, Unhealthy). Values inside a band are
+ * linearly interpolated between the two surrounding integer positions, so
+ * a sensor sitting halfway through the "Moderate" band returns ~2.5.
+ *
+ * @param value      Sensor value (eCO2 in ppm or TVOC in ppb).
+ * @param thresholds Array of 4 ascending band-edge values defining the
+ *                   transitions Excellent->Good, Good->Moderate,
+ *                   Moderate->Poor, Poor->Unhealthy.
+ * @return Continuous level position in [0.0, 4.0].
+ */
+static float value_to_level_pos(int value, const int thresholds[4])
+{
+    if (value <= 0) return 0.0f;
+    // Below first threshold: interpolate within Excellent band (0..1)
+    if (value < thresholds[0]) {
+        return (float)value / (float)thresholds[0];
+    }
+    // Inside one of the middle bands: interpolate between band edges
+    for (int i = 0; i < 3; i++) {
+        if (value < thresholds[i + 1]) {
+            float span = (float)(thresholds[i + 1] - thresholds[i]);
+            float frac = (float)(value - thresholds[i]) / span;
+            return (float)(i + 1) + frac;
+        }
+    }
+    // At/above the last threshold: clamp at level 4 (Unhealthy)
+    return 4.0f;
+}
+
+/**
+ * @brief Compute target hue from eCO2 + TVOC using the fixed banded scheme
+ *
+ * Takes the worst-of-two level position between eCO2 and TVOC and linearly
+ * interpolates the target hue between the two surrounding band hues. This
+ * keeps the soft-fade feel of the existing implementation while anchoring
+ * the user-visible color to the standardized air-quality bands.
+ *
+ * @param eco2  Equivalent CO2 in ppm
+ * @param etvoc Equivalent TVOC in ppb
+ * @return 16-bit target hue
+ */
+static uint16_t aqi_fixed_to_hue(int eco2, int etvoc)
+{
+    float eco2_pos = value_to_level_pos(eco2, ECO2_BAND_THRESHOLDS_PPM);
+    float tvoc_pos = value_to_level_pos(etvoc, TVOC_BAND_THRESHOLDS_PPB);
+
+    // Worst-of-two: pick the higher (worse) level position
+    float level_pos = (eco2_pos > tvoc_pos) ? eco2_pos : tvoc_pos;
+
+    if (level_pos <= 0.0f) return BAND_HUES[0];
+    if (level_pos >= 4.0f) return BAND_HUES[4];
+
+    int low = (int)level_pos;          // 0..3
+    float frac = level_pos - (float)low;
+
+    // Interpolate hue linearly between the two surrounding band hues.
+    // Cast to int32 first so signed differences (e.g. green->yellow which
+    // decreases) work correctly regardless of direction.
+    int32_t h_low = (int32_t)BAND_HUES[low];
+    int32_t h_high = (int32_t)BAND_HUES[low + 1];
+    int32_t hue = h_low + (int32_t)((h_high - h_low) * frac);
+
+    if (hue < 0) hue = 0;
+    if (hue > 65535) hue = 65535;
+    return (uint16_t)hue;
 }
 
 /**
@@ -205,6 +318,8 @@ void sensor_task(void *pvParameters)
 
         // Update global variables for LED color mapping
         current_aqi = aqi;
+        current_eco2 = eco2;
+        current_etvoc = etvoc;
         current_ens16x_status = ens16x_status;
         
         // Helper function to convert ENS16X status to string
@@ -259,6 +374,17 @@ void sensor_task(void *pvParameters)
 void app_main(void)
 {
     ESP_LOGI(TAG, "AirCube");
+
+    // Announce which AQI color mode is compiled in. This makes it obvious
+    // from the boot log whether the device is using the new fixed banded
+    // scheme (driven by eCO2 + TVOC) or the legacy AQI-S green->red gradient.
+#if AQI_COLOR_MODE == AQI_COLOR_MODE_FIXED
+    ESP_LOGI(TAG, "AQI color mode: FIXED (banded, worst-of-two over eCO2 + TVOC)");
+#elif AQI_COLOR_MODE == AQI_COLOR_MODE_DYNAMIC
+    ESP_LOGI(TAG, "AQI color mode: DYNAMIC (legacy continuous green->red from AQI-S)");
+#else
+    ESP_LOGW(TAG, "AQI color mode: UNKNOWN (AQI_COLOR_MODE=%d)", AQI_COLOR_MODE);
+#endif
 
     // Configure power management
     // ESP32-H2 valid max frequencies: 96, 64, or 48 MHz. Min = XTAL = 32 MHz.
@@ -357,12 +483,17 @@ void app_main(void)
         }
         
         // ── Normal mode: AQI-based color ──
-        // Determine target hue based on AQI (green at 0, red at 200+)
+#if AQI_COLOR_MODE == AQI_COLOR_MODE_FIXED
+        // Fixed banded scheme: worst-of-two over eCO2 + TVOC, smoothed
+        target_hue = aqi_fixed_to_hue(current_eco2, current_etvoc);
+#else
+        // Legacy dynamic scheme: continuous green->red gradient from AQI-S
         if (current_aqi >= AQI_MAX) {
             target_hue = 0;  // Red for high AQI
         } else {
             target_hue = aqi_to_hue(current_aqi);
         }
+#endif
         
         // Smoothly transition current_hue towards target_hue
         float hue_diff = (float)target_hue - current_hue;
