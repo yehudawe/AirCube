@@ -27,7 +27,7 @@ extern "C" {
  * Configures the ESP32-H2 as a Zigbee End Device with:
  *   - Temperature Measurement cluster (0x0402)
  *   - Relative Humidity cluster (0x0405)
- *   - Custom cluster (0xFC01) for eCO2, eTVOC, AQI
+ *   - Custom cluster (0xFC01) for eCO2, eTVOC, AQI-S (legacy), AQI
  *   - Analog Output cluster (0x000D) for LED brightness
  *
  * On first boot (factory-new), the stack stays idle until the user
@@ -49,9 +49,23 @@ void zigbee_init(void);
  * @param humidity  Relative humidity in percent (0-100)
  * @param eco2      Equivalent CO2 in ppm
  * @param etvoc     Equivalent TVOC in ppb
- * @param aqi       Air Quality Index (0-500)
+ * @param aqi       Canonical AirCube AQI, TVOC-derived (0-400) - reported on
+ *                  attribute ATTR_AQI_ID (0x0003)
+ * @param aqi_s     Legacy ENS161 relative AQI-S (0-500) - reported on
+ *                  attribute ATTR_AQI_S_ID (0x0002), kept on its original
+ *                  attribute ID for backward compatibility with existing
+ *                  Home Assistant / Zigbee2MQTT integrations.
  */
-void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc, int aqi);
+void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
+                           int aqi, int aqi_s);
+
+/**
+ * @brief Push the current LED brightness to the Analog Output cluster.
+ *
+ * Call after a local brightness change (e.g. button press) so coordinators
+ * see the update immediately instead of waiting for the next sensor cycle.
+ */
+void zigbee_report_brightness(void);
 
 /**
  * @brief Check if the device has joined a Zigbee network.

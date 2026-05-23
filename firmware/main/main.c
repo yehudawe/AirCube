@@ -73,6 +73,18 @@ static const uint16_t BAND_HUES[5] = {
     HUE_RED    // Level 4 - Poor / Unhealthy edge   (TVOC 2200 / eCO2 2000)
 };
 
+// AQI values at each TVOC band edge. Mirrors BAND_HUES[] one-for-one:
+// flat 0 plateau across the Excellent band (matches the green plateau in the
+// LED), then a linear ramp to 400 across levels 1..4. Driven by TVOC alone;
+// eCO2 is reported separately as raw ppm.
+static const uint16_t BAND_AQI_TVOC[5] = {
+    0,    // Level 0 - deep clean
+    0,    // Level 1 - Excellent / Good edge   (TVOC 65 ppb) -> plateau
+    133,  // Level 2 - Good / Moderate edge    (TVOC 220 ppb)
+    266,  // Level 3 - Moderate / Poor edge    (TVOC 660 ppb)
+    400   // Level 4 - Poor / Unhealthy edge   (TVOC 2200 ppb)
+};
+
 // Global variables to store sensor data for LED color mapping
 static int current_aqi = 0;
 static int current_eco2 = 0;
@@ -215,6 +227,39 @@ static uint16_t aqi_fixed_to_hue(int eco2, int etvoc)
 }
 
 /**
+ * @brief Compute the canonical AirCube AQI from TVOC.
+ *
+ * Mirrors the LED color mechanism: maps TVOC ppb to a continuous level
+ * position in [0.0, 4.0] using the UBA TVOC bands, then linearly interpolates
+ * BAND_AQI_TVOC[]. Result is a uint16 in [0, 400] with a flat 0 plateau
+ * across the Excellent band (TVOC <= 65 ppb), matching the green plateau in
+ * the LED color path.
+ *
+ * Note: this is intentionally TVOC-only. eCO2 is reported separately as raw
+ * ppm; the color path still uses the worst-of-two over both sensors.
+ *
+ * @param etvoc Equivalent TVOC in ppb
+ * @return AQI value in [0, 400]
+ */
+static uint16_t aqi_calculate(int etvoc)
+{
+    float pos = value_to_level_pos(etvoc, TVOC_BAND_THRESHOLDS_PPB);
+    if (pos <= 0.0f) return BAND_AQI_TVOC[0];
+    if (pos >= 4.0f) return BAND_AQI_TVOC[4];
+
+    int low = (int)pos;                // 0..3
+    float frac = pos - (float)low;
+
+    int32_t a_low  = (int32_t)BAND_AQI_TVOC[low];
+    int32_t a_high = (int32_t)BAND_AQI_TVOC[low + 1];
+    int32_t aqi = a_low + (int32_t)((a_high - a_low) * frac);
+
+    if (aqi < 0) aqi = 0;
+    if (aqi > 65535) aqi = 65535;
+    return (uint16_t)aqi;
+}
+
+/**
  * @brief Startup animation - sweeps from green to red and back to green
  * 
  * This function displays a 3-second animation that smoothly transitions
@@ -312,12 +357,14 @@ void sensor_task(void *pvParameters)
         // Read ENS16X air quality data
         int etvoc = ens16x_read_etvoc();
         int eco2 = ens16x_read_eco2();
-        int aqi = ens16x_read_aqi();
+        int aqi_s = ens16x_read_aqi();         // ENS161 relative AQI-S (0-500)
+        int aqi = aqi_calculate(etvoc);        // Canonical AirCube AQI (TVOC-derived, 0-400)
         int aqi_uba = ens16x_read_aqi_uba();
         enum ENS_STATUS ens16x_status = ens16x_get_status();
 
-        // Update global variables for LED color mapping
-        current_aqi = aqi;
+        // Update global variables for LED color mapping. The legacy LED path
+        // (AQI_COLOR_MODE_DYNAMIC) reads AQI-S, so current_aqi keeps that value.
+        current_aqi = aqi_s;
         current_eco2 = eco2;
         current_etvoc = etvoc;
         current_ens16x_status = ens16x_status;
@@ -346,14 +393,17 @@ void sensor_task(void *pvParameters)
         ESP_LOGI(TAG, "=== Sensor Data ===");
         ESP_LOGI(TAG, "ENS210 - Status: 0x%02X, Temperature: %.2f°C, Humidity: %.2f%%", 
                  ens210_status, temp_c, humidity);
-        ESP_LOGI(TAG, "ENS16X - Status: %s, eTVOC: %d ppb, eCO2: %d ppm, AQI-S: %d, AQI-UBA: %d", 
-                 ens16x_status_str, etvoc, eco2, aqi, aqi_uba);
+        ESP_LOGI(TAG, "ENS16X - Status: %s, eTVOC: %d ppb, eCO2: %d ppm, AQI: %d, AQI-S: %d, AQI-UBA: %d",
+                 ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba);
         
         // Send sensor data as JSON over serial
         serial_send_sensor_data(ens210_status, temp_c, humidity,
-                               ens16x_status_str, etvoc, eco2, aqi, aqi_uba);
+                               ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba);
         
-        // Record sample into history accumulator and check for 10-min flush
+        // Record sample into history accumulator and check for 10-min flush.
+        // History stores the new canonical AQI (TVOC-derived); flushed entries
+        // from before this change still hold the old AQI-S value in the same
+        // columns - the on-flash byte layout did not change.
         history_record_sample(temp_c, humidity, aqi, eco2, etvoc);
         history_check_flush();
         
@@ -362,7 +412,7 @@ void sensor_task(void *pvParameters)
         TickType_t now = xTaskGetTickCount();
         if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
             last_zb_update = now;
-            zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi);
+            zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi, aqi_s);
         }
 
         // Wait for configurable period before next reading
