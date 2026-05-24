@@ -107,7 +107,7 @@ ANALOG_OUTPUT_CLUSTER_ID = 0x000D
         unit="ppb",
         device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
         state_class=SensorStateClass.MEASUREMENT,
-        fallback_name="Volatile organic compounds",
+        fallback_name="tVOC",
     )
     .sensor(
         AirQualityCluster.AttributeDefs.aqi.name,
@@ -115,7 +115,7 @@ ANALOG_OUTPUT_CLUSTER_ID = 0x000D
         endpoint_id=10,
         device_class=SensorDeviceClass.AQI,
         state_class=SensorStateClass.MEASUREMENT,
-        fallback_name="Air quality index",
+        fallback_name="AQI (TVOC)",
     )
     .number(
         "present_value",
@@ -162,15 +162,15 @@ ANALOG_OUTPUT_CLUSTER_ID = 0x000D
 
 ## A4 -- Verify Sensors
 
-Go to **Settings > Devices & Services > ZHA** and click on the AirCube device. You should see five sensors and a brightness control:
+Go to **Settings > Devices & Services > ZHA** and click on the AirCube device. You should see six entities:
 
 | Entity | What It Does | Unit |
 |--------|-------------|------|
 | Temperature | Room temperature | C |
 | Humidity | Relative humidity | % |
 | Equivalent CO2 | eCO2 concentration (estimated) | ppm |
-| Volatile organic compounds | eTVOC concentration | ppb |
-| Air quality index | Overall air quality | -- |
+| tVOC | eTVOC concentration | ppb |
+| AQI (TVOC) | TVOC-derived AQI (0--500) | -- |
 | Brightness | LED brightness (slider) | 0--100 |
 
 > Temperature and humidity are detected automatically by ZHA. eCO2, eTVOC, and AQI come from the custom quirk. The brightness slider uses the standard Analog Output cluster.
@@ -258,7 +258,7 @@ Both converter files are in the [`z2m/`](z2m/) folder of this repo.
 
 ## B7 -- Verify Sensors
 
-Go to **Settings > Devices & Services > MQTT** and click on the AirCube. You should see five sensors (Temperature, Humidity, eCO2, eTVOC, AQI) plus a Brightness control.
+Go to **Settings > Devices & Services > MQTT** and click on the AirCube. You should see six entities: Temperature, Humidity, eCO2, eTVOC, AQI (TVOC-derived), and Brightness.
 
 ---
 
@@ -272,8 +272,8 @@ Edit your dashboard, click **Add Card**, choose **Entities**, and select:
 - AirCube Temperature
 - AirCube Humidity
 - AirCube Equivalent CO2
-- AirCube Volatile organic compounds
-- AirCube Air quality index
+- AirCube tVOC
+- AirCube AQI (TVOC)
 - AirCube Brightness
 
 ### AQI Gauge
@@ -310,10 +310,11 @@ entities:
 
 ## LED Reference
 
+On firmware **1.5.0+**, the LED is a smooth hue ramp from **eCO2 and TVOC** (worst-of-two). See the **[LED Reference in README](README.md#led-reference)** for band thresholds. AQI-S is not shown on the LED and is not reported over Zigbee.
+
 | LED Behavior | Meaning |
 |-------------|---------|
-| Steady green | Good air quality (AQI 0-10) |
-| Yellow to red gradient | Degrading air quality (AQI 10-200) |
+| Green through red (smooth fade) | Air quality from excellent to unhealthy (eCO2 + TVOC) |
 | Flashing blue | Pairing mode (searching for Zigbee network) |
 | Off | Brightness set to 0 (press button to cycle) |
 

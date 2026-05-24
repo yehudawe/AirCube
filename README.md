@@ -37,50 +37,34 @@ That's it. AirCube works out of the box with no setup, no accounts, and no Wi-Fi
 
 | Measurement | Range | What It Tells You |
 |-------------|-------|------------------|
-| **AQI** (Air Quality Index) | 0 -- 400 | Canonical AirCube score, derived from TVOC against fixed indoor-air thresholds (firmware 1.5.0+) |
-| **AQI-S** (relative AQI, ScioSense) | 0 -- 500 | Legacy ENS161 relative score using the past 24 h as a baseline |
+| **AQI** (Air Quality Index) | 0 -- 500 | TVOC-derived score against fixed indoor-air bands (firmware 1.5.0+; 0--500 scale in 1.5.1+) |
+| **AQI-S** (relative AQI, ScioSense) | 0 -- 500 | ENS161 relative score using the past 24 h as a baseline (**USB serial only**) |
 | **eCO2** (equivalent CO2) | 400 -- 65,000 ppm | Estimated CO2 level derived from detected VOCs |
 | **eTVOC** (equivalent Total VOC) | 0 -- 65,000 ppb | Total volatile organic compound concentration |
 | **Temperature** | | Room temperature in Celsius |
 | **Humidity** | 0 -- 100 % | Relative humidity percentage |
 
-**AQI vs. AQI-S.** Starting with firmware **1.5.0**, AirCube reports two air-quality numbers. **AQI** is the new canonical value, computed from TVOC against absolute indoor-air bands (0 = excellent through 400 = unhealthy) and matches the LED color mechanism. **AQI-S** is the original ScioSense relative index, kept for backward compatibility with existing Home Assistant / Zigbee2MQTT setups.
-
-The LED color is based on absolute eCO2 and TVOC thresholds (worst-of-two). To see the individual numbers, connect to a computer or to **Home Assistant**. For other hubs, see **Community extensions**.
-
 ### Understanding the readings
 
-AirCube uses the **ScioSense ENS161** metal-oxide (MOX) gas sensor paired with the **ENS210** temperature and humidity sensor. The ENS161 contains four independent sensor elements and runs all signal processing on-chip -- the firmware reads finished results over I2C, and the ENS210 feeds live temperature and humidity back into the ENS161 for compensation.
+AirCube uses a **ScioSense ENS161** gas sensor and an **ENS210** temperature/humidity sensor. The ENS210 compensates the ENS161; the firmware reads finished values over I2C.
 
-**eCO2 -- equivalent CO2 (ppm)**
-The ENS161 does not measure CO2 directly. Instead, it detects the volatile organic compounds (VOCs) and hydrogen that humans produce alongside CO2 through breathing and perspiration. Because VOC and CO2 levels rise and fall together in occupied rooms, the sensor converts its VOC readings into an equivalent CO2 value in parts per million. This lets you use familiar CO2 thresholds to judge air quality:
+**eCO2 (ppm)** -- Estimated CO2 derived from detected VOCs, not a direct CO2 measurement. Useful for judging ventilation; also picks up odors and fumes a pure CO2 sensor would miss.
 
-| eCO2 (ppm) | Rating | What it means |
-|-----------|--------|---------------|
-| 400 -- 600 | Excellent | Fresh air -- target level |
-| 600 -- 800 | Good | Normal indoor air |
-| 800 -- 1,000 | Fair | Optional ventilation |
-| 1,000 -- 1,500 | Poor | Stale air -- ventilate |
-| > 1,500 | Bad | Heavily contaminated -- ventilate now |
+**eTVOC (ppb)** -- Total volatile organic compounds in the air. Spikes after cooking or cleaning are normal; sustained high readings mean you should ventilate.
 
-A key advantage over a dedicated CO2 sensor is that the ENS161 also detects odors, cooking fumes, and bio-effluents that pure CO2 sensors miss entirely.
+**AQI (0--500)** -- TVOC mapped to a fixed indoor-air scale (firmware 1.5.1+). Linear ramp between band edges; TVOC-only (eCO2 does not affect AQI). Reported over Zigbee and USB serial.
 
-**eTVOC -- equivalent Total Volatile Organic Compounds (ppb)**
-Thousands of VOCs exist indoors -- from building materials, furniture, cleaning products, paint, cooking, and human metabolism. Many cause headaches, eye irritation, or drowsiness (sometimes called Sick Building Syndrome). The eTVOC reading sums these compounds into a single parts-per-billion value. Higher means more VOCs in the air. A spike after cleaning, cooking, or opening new furniture is normal; sustained high readings mean you should ventilate.
+| AQI | TVOC (ppb) | Meaning |
+|-----|------------|---------|
+| 0 -- 15 | 0 -- 65 | Excellent |
+| 15 -- 50 | 65 -- 220 | Good |
+| 50 -- 100 | 220 -- 650 | Moderate |
+| 100 -- 200 | 650 -- 2 200 | Poor |
+| 200 -- 500 | 2 200 -- 5 500 | Unhealthy |
 
-**AQI -- Air Quality Index (0 -- 400, firmware 1.5.0+)**
-On firmware **1.5.0 and above**, AirCube reports a canonical **AQI** computed from **TVOC** against fixed indoor-air bands. The number tracks the LED color directly: TVOC at or below the Excellent edge (65 ppb) is **0**, and the Unhealthy edge (2200 ppb) is **400**, with a smooth linear ramp in between. Because the scale is absolute, the same AQI number always means the same air -- no 24-hour baseline.
+**AQI-S (0--500, USB serial only)** -- ScioSense relative score vs. the past 24 hours (**100** = average). Below 100 is better than recent history; above 100 is worse. Not an absolute clean/dirty reading -- use AQI, eCO2, or eTVOC for that.
 
-**AQI-S -- relative Air Quality Index (0 -- 500)**
-AirCube also reports the **AQI-S** index, a relative score defined by ScioSense. It uses the average air quality of the past 24 hours as a baseline reference of **100**:
-
-- **Below 100** -- air quality is *better* than the 24-hour average.
-- **Above 100** -- air quality is *worse* than the 24-hour average.
-- **0** is the best; **500** is the worst.
-
-Because AQI-S is relative, a low number does not guarantee *good* air in an absolute sense -- it means conditions have improved compared to recent history. For absolute thresholds use the new AQI, eCO2, or eTVOC values.
-
-On firmware **1.5.0 and above**, both AQI and AQI-S are reported over Zigbee and serial. Neither drives the LED color directly -- the LED is based on absolute eCO2 and TVOC thresholds (see **[LED Reference](#led-reference)**), which the new AQI tracks. On firmware **1.4.3 and below**, only AQI-S existed and it drove the LED as a continuous green-to-red gradient (green for 0--10, red at 200+).
+The **LED** uses eCO2 and TVOC together (worst-of-two), not AQI or AQI-S. See **[LED Reference](#led-reference)**.
 
 ### Warm-up and initial start-up
 
@@ -98,7 +82,7 @@ The ENS161 needs about **3 minutes** of warm-up in standard mode before readings
 
 ## Home Assistant Integration
 
-AirCube was designed for Home Assistant. It connects over **Zigbee** -- no USB cable to your server, no cloud, no Wi-Fi credentials to configure. Plug it in, pair it, and all five sensors show up on your dashboard automatically.
+AirCube was designed for Home Assistant. It connects over **Zigbee** -- no USB cable to your server, no cloud, no Wi-Fi credentials to configure. Plug it in, pair it, and six entities show up automatically: temperature, humidity, eCO2, tVOC, AQI, and brightness.
 
 Once connected you can:
 - **Track air quality over time** with built-in history graphs
@@ -177,7 +161,7 @@ The LED is a linear hue ramp driven by **eCO2 and TVOC** (worst-of-two). Green a
 | Red (plateau)    | ≥ 2 200    | ≥ 2 000       | Unhealthy |
 | Flashing blue    | --         | --            | Zigbee pairing mode |
 
-Thresholds follow the German UBA hygienic rating for indoor air. AQI-S is still reported over Zigbee and serial; it just no longer drives the LED.
+Thresholds follow the German UBA hygienic rating for indoor air. Over **Zigbee**, TVOC-derived AQI is reported alongside eCO2, eTVOC, temperature, humidity, and brightness. **AQI-S** is available over **USB serial** only and does not drive the LED.
 
 ### Firmware 1.4.3 and below (legacy)
 
