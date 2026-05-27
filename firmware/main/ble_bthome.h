@@ -29,8 +29,6 @@ void ble_bthome_init(void);
  *
  * Rebuilds the BTHome payload and restarts advertising with the new data.
  * No-op until the BLE stack has completed initialization.
- * Safe to call from any FreeRTOS task.
- *
  * @param temp_c   Temperature in °C (after offset correction)
  * @param humidity Relative humidity in % (0-100)
  * @param eco2     Equivalent CO2 in ppm

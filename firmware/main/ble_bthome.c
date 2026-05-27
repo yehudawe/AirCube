@@ -45,11 +45,11 @@ static const char *TAG = "ble_bthome";
 #define BTHOME_OBJ_CO2          0x12  // uint16 ppm
 #define BTHOME_OBJ_TVOC         0x13  // uint16 µg/m³ (we send ppb)
 
-static bool     s_ble_ready  = false;
-static int16_t  s_temp_x100  = 2000;  // 20.00 °C until first update
-static uint16_t s_hum_x100   = 5000;  // 50.00 %
-static uint16_t s_co2        = 0;
-static uint16_t s_tvoc       = 0;
+static volatile bool     s_ble_ready  = false;
+static volatile int16_t  s_temp_x100  = 2000;  // 20.00 °C until first update
+static volatile uint16_t s_hum_x100   = 5000;  // 50.00 %
+static volatile uint16_t s_co2        = 0;
+static volatile uint16_t s_tvoc       = 0;
 
 // ---------------------------------------------------------------------------
 // Advertising helpers

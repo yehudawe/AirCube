@@ -10,7 +10,6 @@ idf_component_register(SRCS "main.c"
                                 "history.c"
                                 "zigbee.c"
                                 "ble_bthome.c"
-                       PRIV_REQUIRES spi_flash esp_partition esp_timer esp_driver_rmt esp_driver_i2c esp_driver_uart esp_driver_usb_serial_jtag vfs esp_pm esp_driver_gpio nvs_flash esp_app_format
+                       PRIV_REQUIRES spi_flash esp_partition esp_timer esp_driver_rmt esp_driver_i2c esp_driver_uart esp_driver_usb_serial_jtag vfs esp_pm esp_driver_gpio nvs_flash esp_app_format bt
                                      espressif__esp-zigbee-lib espressif__esp-zboss-lib
-                                     bt
                        INCLUDE_DIRS "")
