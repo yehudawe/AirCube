@@ -25,3 +25,22 @@ CONFIG_ZB_ZED=y
 CONFIG_ZB_RADIO_NATIVE=y
 # CONFIG_ZB_RADIO_SPINEL_UART is not set
 CONFIG_AIRCUBE_ZB_TX_POWER_DBM=20
+
+#
+# Bluetooth — NimBLE broadcaster for BTHome v2 (firmware/main/ble_bthome.c)
+#
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# Non-connectable broadcast only; disable unused roles to save flash/RAM
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+# Maximum advertising instances (1 is enough for BTHome)
+CONFIG_BT_NIMBLE_MAX_EXT_ADV_INSTANCES=0
+
+#
+# Radio coexistence — Zigbee (802.15.4) + BLE share the 2.4 GHz radio.
+# Without this the two stacks will conflict.
+#
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
