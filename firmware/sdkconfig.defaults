@@ -3,10 +3,10 @@
 #
 
 #
-# Flash size (AirCube uses 4MB GD flash)
+# Flash size (AirCube hardware has 2MB flash)
 #
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
 
 #
 # Custom partition table (includes zb_storage, zb_fct, and history partitions)
