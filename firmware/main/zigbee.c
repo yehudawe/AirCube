@@ -69,6 +69,21 @@ static TickType_t    s_last_join_tick = 0;       /* When we most recently joined
 static uint32_t      s_rejoin_backoff_ms = 0;
 static uint8_t       s_sw_build_id[SW_BUILD_ZCL_BUF_LEN];
 static uint8_t       s_init_fail_count = 0;
+static uint16_t      s_default_eco2  = 0;
+static uint16_t      s_default_etvoc = 0;
+static uint16_t      s_default_aqi   = 0;
+
+typedef struct {
+    float temp_c;
+    float humidity;
+    int eco2;
+    int etvoc;
+    int aqi;
+    volatile bool pending;
+} zigbee_pending_sensors_t;
+
+static zigbee_pending_sensors_t s_pending_sensors;
+static volatile bool s_brightness_report_pending = false;
 #define INIT_FAIL_MAX  5  /* Reboot after this many consecutive init failures */
 
 #define PAIRING_TIMEOUT_MS      60000   /* Auto-cancel pairing after 60 s */
@@ -117,23 +132,113 @@ static float current_brightness_percent(void)
     return led_get_intensity() * 100.0f;
 }
 
-static void report_attr(uint16_t cluster_id, uint16_t attr_id)
+static void zigbee_set_sensor_attributes(float temp_c, float humidity, int eco2,
+                                         int etvoc, int aqi)
 {
+    int16_t  zb_temp  = temp_to_zb(temp_c);
+    uint16_t zb_hum   = humidity_to_zb(humidity);
+    uint16_t zb_eco2  = (uint16_t)eco2;
+    uint16_t zb_etvoc = (uint16_t)etvoc;
+    uint16_t zb_aqi   = (uint16_t)aqi;
+
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID, &zb_temp, true);
+
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID, &zb_hum, true);
+
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ATTR_ECO2_ID, &zb_eco2, true);
+
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ATTR_ETVOC_ID, &zb_etvoc, true);
+
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ATTR_AQI_ID, &zb_aqi, true);
+
+    /* Keep brightness in sync locally; report only on button/startup. */
+    float zb_brightness = current_brightness_percent();
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
+}
+
+static void zigbee_set_brightness_attribute(void)
+{
+    float zb_brightness = current_brightness_percent();
+    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
+
+    /* Explicit report on the Zigbee thread (no automatic float reporting cfg). */
     esp_zb_zcl_report_attr_cmd_t report_cmd = { 0 };
     report_cmd.zcl_basic_cmd.dst_addr_u.addr_short = 0x0000;
     report_cmd.zcl_basic_cmd.dst_endpoint = 1;
     report_cmd.zcl_basic_cmd.src_endpoint = AIRCUBE_ENDPOINT;
     report_cmd.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-    report_cmd.clusterID = cluster_id;
+    report_cmd.clusterID = ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT;
     report_cmd.manuf_specific = 0;
     report_cmd.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_CLI;
     report_cmd.dis_default_resp = 1;
     report_cmd.manuf_code = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC;
-    report_cmd.attributeID = attr_id;
+    report_cmd.attributeID = ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID;
     esp_zb_zcl_report_attr_cmd_req(&report_cmd);
 }
 
-/* ── Forward declarations ─────────────────────────────────────────────── */
+/* Run on the Zigbee thread via esp_zb_scheduler_alarm(). */
+static void zigbee_apply_sensors_cb(uint8_t unused)
+{
+    (void)unused;
+
+    if (!s_connected || !s_pending_sensors.pending) {
+        return;
+    }
+
+    float temp_c  = s_pending_sensors.temp_c;
+    float humidity = s_pending_sensors.humidity;
+    int eco2      = s_pending_sensors.eco2;
+    int etvoc     = s_pending_sensors.etvoc;
+    int aqi       = s_pending_sensors.aqi;
+    s_pending_sensors.pending = false;
+
+    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
+        ESP_LOGW(TAG, "Zigbee lock timeout in apply_sensors – will retry next cycle");
+        s_pending_sensors.pending = true;
+        return;
+    }
+
+    zigbee_set_sensor_attributes(temp_c, humidity, eco2, etvoc, aqi);
+    esp_zb_lock_release();
+}
+
+static void zigbee_apply_brightness_cb(uint8_t unused)
+{
+    (void)unused;
+
+    if (!s_connected || !s_brightness_report_pending) {
+        return;
+    }
+    s_brightness_report_pending = false;
+
+    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
+        ESP_LOGW(TAG, "Zigbee lock timeout in apply_brightness – skipping");
+        return;
+    }
+
+    zigbee_set_brightness_attribute();
+    esp_zb_lock_release();
+}
+
+static void schedule_brightness_report(void)
+{
+    s_brightness_report_pending = true;
+    esp_zb_scheduler_alarm((esp_zb_callback_t)zigbee_apply_brightness_cb, 0, 0);
+}
 
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask);
 static void report_startup_brightness_cb(uint8_t unused);
@@ -437,22 +542,20 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
     /* ---- Custom cluster 0xFC01 (eCO2, eTVOC, AQI) ---- */
     esp_zb_attribute_list_t *custom_cluster = esp_zb_zcl_attr_list_create(CUSTOM_CLUSTER_ID);
 
-    uint16_t default_val = 0;
-
     ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
         ATTR_ECO2_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
         ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
-        &default_val));
+        &s_default_eco2));
 
     ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
         ATTR_ETVOC_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
         ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
-        &default_val));
+        &s_default_etvoc));
 
     ESP_ERROR_CHECK(esp_zb_custom_cluster_add_custom_attr(custom_cluster,
         ATTR_AQI_ID, ESP_ZB_ZCL_ATTR_TYPE_U16,
         ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING,
-        &default_val));
+        &s_default_aqi));
 
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_custom_cluster(cluster_list,
         custom_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
@@ -560,24 +663,9 @@ static void configure_reporting(void)
     };
     esp_zb_zcl_update_reporting_info(&aqi_rpt);
 
-    /* Brightness: report every 60s max, or on 5.0% change */
-    esp_zb_zcl_reporting_info_t brightness_rpt = {
-        .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
-        .ep                 = AIRCUBE_ENDPOINT,
-        .cluster_id         = ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT,
-        .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
-        .u.send_info.min_interval     = 1,
-        .u.send_info.max_interval     = 60,
-        .u.send_info.def_min_interval = 1,
-        .u.send_info.def_max_interval = 60,
-        .attr_id            = ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID,
-        .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
-    };
-    float brightness_delta = 5.0f;
-    memcpy(&brightness_rpt.u.send_info.delta, &brightness_delta, sizeof(float));
-    esp_zb_zcl_update_reporting_info(&brightness_rpt);
-
+    /* Brightness is reported on startup and button press only. Automatic
+     * float reporting here has triggered ZBOSS reporting-table crashes on
+     * some devices (Load access fault in zb_zcl_get_next_reporting_info). */
 }
 
 static void apply_zigbee_tx_power(void)
@@ -691,57 +779,16 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
         return;     /* Don't update attributes until we've joined a network */
     }
 
-    /* Convert to ZCL units */
-    int16_t  zb_temp  = temp_to_zb(temp_c);
-    uint16_t zb_hum   = humidity_to_zb(humidity);
-    uint16_t zb_eco2  = (uint16_t)eco2;
-    uint16_t zb_etvoc = (uint16_t)etvoc;
-    uint16_t zb_aqi   = (uint16_t)aqi;
+    s_pending_sensors.temp_c   = temp_c;
+    s_pending_sensors.humidity = humidity;
+    s_pending_sensors.eco2     = eco2;
+    s_pending_sensors.etvoc    = etvoc;
+    s_pending_sensors.aqi      = aqi;
+    s_pending_sensors.pending  = true;
 
-    /* Bounded lock: avoid blocking sensor_task forever if the stack is stuck */
-    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
-        ESP_LOGW(TAG, "Zigbee lock timeout in update_sensors – skipping this cycle");
-        return;
-    }
-
-    /* Standard clusters */
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID, &zb_temp, false);
-
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID, &zb_hum, false);
-
-    /* Custom cluster (0xFC01) */
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ATTR_ECO2_ID, &zb_eco2, false);
-
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ATTR_ETVOC_ID, &zb_etvoc, false);
-
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        CUSTOM_CLUSTER_ID, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ATTR_AQI_ID, &zb_aqi, false);
-
-    /* Sync current brightness to Analog Output cluster (covers button changes) */
-    float zb_brightness = current_brightness_percent();
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
-
-    /* One-shot attribute reports to ensure coordinator updates */
-    report_attr(ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
-                ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID);
-    report_attr(ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT,
-                ESP_ZB_ZCL_ATTR_REL_HUMIDITY_MEASUREMENT_VALUE_ID);
-    report_attr(CUSTOM_CLUSTER_ID, ATTR_ECO2_ID);
-    report_attr(CUSTOM_CLUSTER_ID, ATTR_ETVOC_ID);
-    report_attr(CUSTOM_CLUSTER_ID, ATTR_AQI_ID);
-
-    esp_zb_lock_release();
+    /* Apply on the Zigbee thread; avoid esp_zb_zcl_report_attr_cmd_req() from
+     * sensor_task, which can crash inside zb_zcl_get_next_reporting_info(). */
+    esp_zb_scheduler_alarm((esp_zb_callback_t)zigbee_apply_sensors_cb, 0, 0);
 }
 
 bool zigbee_is_connected(void)
@@ -757,12 +804,7 @@ static void report_startup_brightness_cb(uint8_t unused)
         return;
     }
 
-    float zb_brightness = current_brightness_percent();
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
-    report_attr(ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT,
-                ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID);
+    schedule_brightness_report();
 }
 
 void zigbee_report_brightness(void)
@@ -770,17 +812,7 @@ void zigbee_report_brightness(void)
     if (!s_connected) {
         return;
     }
-    float zb_brightness = current_brightness_percent();
-    if (!esp_zb_lock_acquire(pdMS_TO_TICKS(2000))) {
-        ESP_LOGW(TAG, "Zigbee lock timeout in report_brightness – skipping");
-        return;
-    }
-    esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
-    report_attr(ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT,
-                ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID);
-    esp_zb_lock_release();
+    schedule_brightness_report();
 }
 
 void zigbee_start_pairing(void)
