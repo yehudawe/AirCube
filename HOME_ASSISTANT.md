@@ -310,17 +310,19 @@ entities:
 
 ## LED Reference
 
-The LED follows **canonical AQI** (TVOC-derived) on a continuous green-to-red gradient:
+The LED follows **canonical AQI** (TVOC-derived) on a continuous green-to-red gradient. The hue moves linearly with AQI, so the color fades smoothly rather than stepping between bands. eCO2 does **not** affect the LED.
 
-| LED Behavior | AQI | Meaning |
-|-------------|-----|---------|
-| Steady green | 0--10 | Excellent air quality |
-| Green to yellow to red | 10--200 | Degrading air quality |
-| Steady red | 200+ | Poor to unhealthy air quality |
-| Flashing blue | -- | Pairing mode (searching for Zigbee network) |
-| Off | -- | Brightness set to 0 (press button to cycle) |
+| LED color | AQI | TVOC (ppb) | Rating |
+|-----------|-----|------------|--------|
+| Steady green | 0--10 | 0--~43 | Excellent |
+| Green → lime | 10--50 | ~43--220 | Good |
+| Lime → yellow | 50--100 | 220--650 | Moderate |
+| Yellow → orange → red | 100--200 | 650--2,200 | Poor |
+| Steady red | 200+ | 2,200+ | Unhealthy |
+| Flashing blue | -- | -- | Pairing mode (searching for Zigbee network) |
+| Off | -- | -- | Brightness set to 0 (press button to cycle) |
 
-> On firmware **1.4.3 and below**, the same gradient was driven by **AQI-S** (relative) instead of canonical AQI. See the [README LED Reference](README.md#led-reference) for the full mapping including TVOC bands.
+> On firmware **1.4.3 and below**, the same gradient was driven by **AQI-S** (relative) instead of canonical AQI. See the [README LED Reference](README.md#led-reference) for the full mapping including the eCO2 comfort tiers.
 
 ### Button
 
