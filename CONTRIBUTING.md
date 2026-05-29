@@ -137,7 +137,7 @@ ENS210 (I2C)  ──► sensor_task ──► serial JSON output (USB)
 ENS16X (I2C)  ──►      │       ├─► history_record_sample() ──► flash ring buffer
                         │       └─► zigbee_update_sensors()  ──► Zigbee attribute reports (every 10s)
                         │
-                   AQI value ──► main loop ──► LED color (green-to-red hue mapping)
+                   AQI value ──► main loop ──► LED color (continuous green-to-red from canonical AQI)
                                                     ▲
               Home Assistant ──► Zigbee Analog Output write ──► led_set_intensity() (brightness)
 ```

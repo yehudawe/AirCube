@@ -285,11 +285,11 @@ type: gauge
 entity: sensor.aircube_living_room_air_quality_index
 name: Air Quality
 min: 0
-max: 200
+max: 500
 severity:
   green: 0
   yellow: 50
-  red: 100
+  red: 200
 ```
 
 ### 24-Hour History
@@ -310,12 +310,17 @@ entities:
 
 ## LED Reference
 
-| LED Behavior | Meaning |
-|-------------|---------|
-| Steady green | Good air quality (AQI 0-10) |
-| Yellow to red gradient | Degrading air quality (AQI 10-200) |
-| Flashing blue | Pairing mode (searching for Zigbee network) |
-| Off | Brightness set to 0 (press button to cycle) |
+The LED follows **canonical AQI** (TVOC-derived) on a continuous green-to-red gradient:
+
+| LED Behavior | AQI | Meaning |
+|-------------|-----|---------|
+| Steady green | 0--10 | Excellent air quality |
+| Green to yellow to red | 10--200 | Degrading air quality |
+| Steady red | 200+ | Poor to unhealthy air quality |
+| Flashing blue | -- | Pairing mode (searching for Zigbee network) |
+| Off | -- | Brightness set to 0 (press button to cycle) |
+
+> On firmware **1.4.3 and below**, the same gradient was driven by **AQI-S** (relative) instead of canonical AQI. See the [README LED Reference](README.md#led-reference) for the full mapping including TVOC bands.
 
 ### Button
 

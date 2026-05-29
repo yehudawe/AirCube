@@ -199,12 +199,12 @@ class SensorDisplay(QFrame):
             self.humidity_label.setText(f"{hum:.1f}")
         if aqi is not None:
             self.aqi_label.setText(f"{int(aqi)}")
-            # Color code AQI
+            # Color code AQI (matches canonical TVOC bands / LED gradient)
             if aqi <= 50:
                 self.aqi_label.setStyleSheet("color: #2e7d32;")  # Green
             elif aqi <= 100:
                 self.aqi_label.setStyleSheet("color: #f9a825;")  # Yellow
-            elif aqi <= 150:
+            elif aqi <= 200:
                 self.aqi_label.setStyleSheet("color: #ef6c00;")  # Orange
             else:
                 self.aqi_label.setStyleSheet("color: #c62828;")  # Red
