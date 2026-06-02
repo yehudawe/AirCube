@@ -25,7 +25,7 @@ Works standalone out of the box. Pairs with Home Assistant in minutes. Other pla
 
 The color shifts smoothly as conditions change. No app needed -- just glance at it.
 
-> **Firmware 1.5.0 and above** drive the LED from a fixed eCO2 + TVOC scale (worst-of-two), so the color always means the same thing in absolute terms. See **[LED Reference](#led-reference)** for the exact thresholds. Firmware **1.4.3 and below** use the legacy AQI-S scale instead.
+> **Firmware 1.5.0 and above** drive the LED from **canonical AQI** (TVOC-derived, absolute). The color is a smooth green-to-red gradient -- same feel as older firmware, but tied to fixed indoor-air bands instead of the relative AQI-S baseline. See **[LED Reference](#led-reference)** for the exact mapping. Firmware **1.4.3 and below** used the same gradient shape, but driven by **AQI-S** instead.
 
 **4. Adjust brightness** -- Press the button to cycle through brightness levels.
 
@@ -54,17 +54,19 @@ AirCube uses a **ScioSense ENS161** gas sensor and an **ENS210** temperature/hum
 
 **AQI (0--500)** -- TVOC mapped to a fixed indoor-air scale (firmware 1.5.1+). Linear ramp between band edges; TVOC-only (eCO2 does not affect AQI). Reported over Zigbee and USB serial.
 
-| AQI | TVOC (ppb) | Meaning |
-|-----|------------|---------|
-| 0 -- 15 | 0 -- 65 | Excellent |
-| 15 -- 50 | 65 -- 220 | Good |
-| 50 -- 100 | 220 -- 650 | Moderate |
-| 100 -- 200 | 650 -- 2 200 | Poor |
-| 200 -- 500 | 2 200 -- 5 500 | Unhealthy |
+| Rating | LED color | AQI | TVOC (ppb) |
+|--------|-----------|-----|------------|
+| Excellent | Green | 0 -- 15 | 0 -- 65 |
+| Good | Green → lime | 15 -- 50 | 65 -- 220 |
+| Moderate | Lime → yellow | 50 -- 100 | 220 -- 650 |
+| Poor | Yellow → orange → red | 100 -- 200 | 650 -- 2,200 |
+| Unhealthy | Red | 200 -- 500 | 2,200 -- 5,500 |
+
+The LED color is derived from TVOC/AQI alone (eCO2 does not drive the LED). AQI is linear between band edges, so the LED fades smoothly.
 
 **AQI-S (0--500, USB serial only)** -- ScioSense relative score vs. the past 24 hours (**100** = average). Below 100 is better than recent history; above 100 is worse. Not an absolute clean/dirty reading -- use AQI, eCO2, or eTVOC for that.
 
-The **LED** uses eCO2 and TVOC together (worst-of-two), not AQI or AQI-S. See **[LED Reference](#led-reference)**.
+Only **AQI** drives the LED color. See **[LED Reference](#led-reference)**.
 
 ### Warm-up and initial start-up
 
@@ -150,27 +152,35 @@ Latest release: [GitHub Releases](https://github.com/StuckAtPrototype/AirCube/re
 
 ### Firmware 1.5.0 and above (current)
 
-The LED is a linear hue ramp driven by **eCO2 and TVOC** (worst-of-two). Green at the clean end, red at the bad end, with smooth fades in between.
+The LED is a continuous green-to-red gradient driven by **canonical AQI** (TVOC-derived). The hue moves linearly with AQI: pure green up to AQI 10, then fading green → lime → yellow → orange → red, reaching full red at AQI 200. eCO2 does **not** affect the LED.
 
-| LED color (fade) | TVOC (ppb) | eCO2 (ppm)    | Meaning   |
-|------------------|------------|---------------|-----------|
-| Green (plateau)  | 0 – 65     | < 800         | Excellent |
-| Green to lime    | 65 – 220   | 800 – 1 000   | Good      |
-| Lime to amber    | 220 – 660  | 1 000 – 1 400 | Moderate  |
-| Amber to red     | 660 – 2 200| 1 400 – 2 000 | Poor      |
-| Red (plateau)    | ≥ 2 200    | ≥ 2 000       | Unhealthy |
-| Flashing blue    | --         | --            | Zigbee pairing mode |
+```mermaid
+flowchart LR
+    A["AQI 0–10<br/>TVOC 0–~43 ppb"] --> G["Steady green"]
+    B["AQI 10–200<br/>TVOC ~43–2 200 ppb"] --> GR["Green → lime → yellow → orange → red"]
+    C["AQI 200+<br/>TVOC 2 200+ ppb"] --> R["Steady red"]
+```
 
-Thresholds follow the German UBA hygienic rating for indoor air. Over **Zigbee**, TVOC-derived AQI is reported alongside eCO2, eTVOC, temperature, humidity, and brightness. **AQI-S** is available over **USB serial** only and does not drive the LED.
+| LED color | AQI | TVOC (ppb) | Rating |
+|-----------|-----|------------|--------|
+| Steady green | 0 -- 10 | 0 -- ~43 | Excellent |
+| Green → lime | 10 -- 50 | ~43 -- 220 | Good |
+| Lime → yellow | 50 -- 100 | 220 -- 650 | Moderate |
+| Yellow → orange → red | 100 -- 200 | 650 -- 2 200 | Poor |
+| Steady red | 200+ | 2 200+ | Unhealthy |
+| Flashing blue | -- | -- | Zigbee pairing mode |
+
+Key gradient landmarks: **yellow** around AQI 105 (~730 ppb) and **orange** around AQI 150 (~1,460 ppb). Over **Zigbee**, TVOC-derived AQI is reported alongside eCO2, eTVOC, temperature, humidity, and brightness. **AQI-S** is available over **USB serial** only and does not drive the LED.
 
 ### Firmware 1.4.3 and below (legacy)
 
-The LED was a continuous green-to-red gradient driven only by **AQI-S**:
+Same gradient shape as above, but driven by **AQI-S** (relative, 24-hour baseline) instead of canonical AQI:
 
 | LED | Meaning |
 |-----|---------|
 | Steady green | Good air quality (AQI-S 0--10) |
 | Yellow through red | Degrading to poor air quality (AQI-S 10--200) |
+| Steady red | Poor air quality (AQI-S 200+) |
 | Flashing blue | Zigbee pairing mode |
 
 ### Button

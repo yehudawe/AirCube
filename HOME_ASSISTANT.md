@@ -285,11 +285,11 @@ type: gauge
 entity: sensor.aircube_living_room_air_quality_index
 name: Air Quality
 min: 0
-max: 200
+max: 500
 severity:
   green: 0
   yellow: 50
-  red: 100
+  red: 200
 ```
 
 ### 24-Hour History
@@ -310,13 +310,19 @@ entities:
 
 ## LED Reference
 
-On firmware **1.5.0+**, the LED is a smooth hue ramp from **eCO2 and TVOC** (worst-of-two). See the **[LED Reference in README](README.md#led-reference)** for band thresholds. AQI-S is not shown on the LED and is not reported over Zigbee.
+The LED follows **canonical AQI** (TVOC-derived) on a continuous green-to-red gradient. The hue moves linearly with AQI, so the color fades smoothly rather than stepping between bands. eCO2 does **not** affect the LED.
 
-| LED Behavior | Meaning |
-|-------------|---------|
-| Green through red (smooth fade) | Air quality from excellent to unhealthy (eCO2 + TVOC) |
-| Flashing blue | Pairing mode (searching for Zigbee network) |
-| Off | Brightness set to 0 (press button to cycle) |
+| LED color | AQI | TVOC (ppb) | Rating |
+|-----------|-----|------------|--------|
+| Steady green | 0--10 | 0--~43 | Excellent |
+| Green → lime | 10--50 | ~43--220 | Good |
+| Lime → yellow | 50--100 | 220--650 | Moderate |
+| Yellow → orange → red | 100--200 | 650--2,200 | Poor |
+| Steady red | 200+ | 2,200+ | Unhealthy |
+| Flashing blue | -- | -- | Pairing mode (searching for Zigbee network) |
+| Off | -- | -- | Brightness set to 0 (press button to cycle) |
+
+> On firmware **1.4.3 and below**, the same gradient was driven by **AQI-S** (relative) instead of canonical AQI. See the [README LED Reference](README.md#led-reference) for the full mapping.
 
 ### Button
 
