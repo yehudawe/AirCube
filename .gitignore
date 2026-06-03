@@ -26,3 +26,6 @@ scripts/build/
 
 # Local release staging
 releases/
+
+# BLE monitor runtime state
+scripts/known_aircubes.json

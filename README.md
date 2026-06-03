@@ -160,6 +160,16 @@ python aircube_app.py
 
 Select your serial port, click **Connect**, and you'll see live data.
 
+### BLE monitor (base app)
+
+AirCubes with firmware **1.6.0+** also broadcast sensor readings over **Bluetooth (BTHome v2)** — no USB cable or pairing required. The base script `scripts/aircube_ble_monitor.py` auto-discovers nearby cubes, lets you name and save them, computes AQI and LED-matching color from TVOC, and plots live history. It is meant as a starting point to build your own multi-cube app:
+
+```
+cd AirCube/scripts
+pip install -r requirements.txt
+python aircube_ble_monitor.py
+```
+
 > **Tip:** Prefer a minimal taskbar-only view? See the companion [**AirCube Tray**](https://github.com/StuckAtPrototype/AirCubeTray) repo -- a lightweight Windows system-tray app that shows AQI as a live, color-coded number in your taskbar. It ships its own installer.
 
 ---
