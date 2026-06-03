@@ -79,9 +79,8 @@ uint32_t get_color_from_hue(uint16_t hue) {
 uint32_t get_next_color_full_spectrum(void) {
     uint32_t color = get_color_from_hue(current_hue);
 
-    // Increment hue for next call
+    // Increment hue for next call — uint16_t wraps at 65536 automatically
     current_hue += hue_increment;
-    if (current_hue >= 65536) current_hue = 0;  // Wrap around
 
     return color;
 }

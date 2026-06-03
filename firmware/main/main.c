@@ -15,6 +15,7 @@
 #include "button.h"
 #include "history.h"
 #include "zigbee.h"
+#include "ble_bthome.h"
 
 static const char *TAG = "main";
 
@@ -327,12 +328,13 @@ void sensor_task(void *pvParameters)
         history_record_sample(temp_c, humidity, aqi, eco2, etvoc);
         history_check_flush();
         
-        // Push sensor data to Zigbee attributes every 10 seconds
+        // Push sensor data to Zigbee and BLE every 10 seconds
         static TickType_t last_zb_update = 0;
         TickType_t now = xTaskGetTickCount();
         if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
             last_zb_update = now;
             zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi);
+            ble_bthome_update(temp_c, humidity, eco2, etvoc);
         }
 
         // Wait for configurable period before next reading
@@ -420,6 +422,9 @@ void app_main(void)
     
     // Initialize Zigbee stack (End Device, idles until long-press on first boot)
     zigbee_init();
+
+    // Initialize BLE BTHome broadcaster (shares radio with Zigbee via coexistence)
+    ble_bthome_init();
     
     // Create command processing task
     xTaskCreate(command_task, "command_task", COMMAND_TASK_STACK_SIZE, NULL, 
