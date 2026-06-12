@@ -1,11 +1,13 @@
 # AirCube
 
-**Know your air.** AirCube is a desktop air quality monitor with built-in **Home Assistant** support over **Zigbee**. It tracks temperature, humidity, eCO2, TVOC, and AQI -- showing air quality as a single, glanceable LED color and reporting every reading to your smart home.
+**See your air** AirCube is a desktop air quality monitor with built-in **Home Assistant** support over **Zigbee**. It tracks temperature, humidity, eCO2, TVOC, and AQI -- showing air quality as a single, glanceable LED color and reporting every reading to your smart home.
 
 Works standalone out of the box. Pairs with Home Assistant in minutes. Other platforms are supported through **[community-contributed extensions](#community-extensions)**.
 
 [Watch the demo](https://youtu.be/m12KpLyLCrw) (early build -- Home Assistant integration came after this video)
 
+[AirCube](https://stuckatprototype.com/products/aircube) -- Assembled AirCube
+[AirCube Populated PCB](https://stuckatprototype.com/products/aircube-populated-pcb) -- AirCube Populated PCB AirCube
 ---
 
 ## Getting Started
