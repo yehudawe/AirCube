@@ -7,7 +7,9 @@ Works standalone out of the box. Pairs with Home Assistant in minutes. Other pla
 [Watch the demo](https://youtu.be/m12KpLyLCrw) (early build -- Home Assistant integration came after this video)
 
 [AirCube](https://stuckatprototype.com/products/aircube) -- Assembled AirCube
+
 [AirCube Populated PCB](https://stuckatprototype.com/products/aircube-populated-pcb) -- AirCube Populated PCB AirCube
+
 ---
 
 ## Getting Started
