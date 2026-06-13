@@ -12,7 +12,7 @@
  * Custom cluster 0xFC01 attributes (matches zha/aircube.py):
  *   0x0000 = eco2  (uint16, ppm)
  *   0x0001 = etvoc (uint16, ppb)
- *   0x0002 = aqi   (uint16, TVOC-derived AQI, 0-500)
+ *   0x0002 = aqi   (uint16, TVOC-derived VOC Level, 0-500)
  */
 
 import {temperature, humidity} from 'zigbee-herdsman-converters/lib/modernExtend';
@@ -91,7 +91,7 @@ const definition = {
             .withValueMax(65535),
         e.numeric('aqi', exposes.access.STATE)
             .withUnit('')
-            .withDescription('AQI (TVOC)')
+            .withDescription('VOC Level (TVOC)')
             .withValueMin(0)
             .withValueMax(500),
         e.numeric('brightness', exposes.access.ALL)

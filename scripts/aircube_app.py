@@ -138,13 +138,13 @@ class SensorDisplay(QFrame):
         hum_title.setFont(label_font)
         hum_title.setStyleSheet("color: #666;")
         
-        # AQI
+        # VOC Level
         self.aqi_label = QLabel("---")
         self.aqi_label.setFont(value_font)
         self.aqi_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        aqi_unit = QLabel("AQI")
+        aqi_unit = QLabel("")
         aqi_unit.setFont(unit_font)
-        aqi_title = QLabel("Air Quality Index")
+        aqi_title = QLabel("VOC Level")
         aqi_title.setFont(label_font)
         aqi_title.setStyleSheet("color: #666;")
         
@@ -199,7 +199,7 @@ class SensorDisplay(QFrame):
             self.humidity_label.setText(f"{hum:.1f}")
         if aqi is not None:
             self.aqi_label.setText(f"{int(aqi)}")
-            # Color code AQI (matches canonical TVOC bands / LED gradient)
+            # Color code VOC Level (matches canonical TVOC bands / LED gradient)
             if aqi <= 50:
                 self.aqi_label.setStyleSheet("color: #2e7d32;")  # Green
             elif aqi <= 100:
@@ -245,7 +245,7 @@ class PlotCanvas(FigureCanvas):
             ax.grid(True, linestyle='--', alpha=0.7)
         
         self.ax_temp_hum.set_ylabel("Temp (°C) / Humidity (%)")
-        self.ax_aqi.set_ylabel("AQI")
+        self.ax_aqi.set_ylabel("VOC Level")
         self.ax_gases.set_ylabel("eCO2 (ppm) / eTVOC (ppb)")
         self.ax_gases.set_xlabel("Time (seconds)")
     
@@ -262,9 +262,9 @@ class PlotCanvas(FigureCanvas):
         self.ax_temp_hum.legend(loc="upper left", fontsize=8)
         self.ax_temp_hum.grid(True, linestyle='--', alpha=0.7)
         
-        # AQI
-        self.ax_aqi.plot(x, aqi, label="AQI", color='#7cb342', linewidth=1.5)
-        self.ax_aqi.set_ylabel("AQI")
+        # VOC Level
+        self.ax_aqi.plot(x, aqi, label="VOC Level", color='#7cb342', linewidth=1.5)
+        self.ax_aqi.set_ylabel("VOC Level")
         self.ax_aqi.legend(loc="upper left", fontsize=8)
         self.ax_aqi.grid(True, linestyle='--', alpha=0.7)
         

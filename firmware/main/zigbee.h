@@ -2,7 +2,7 @@
  * @file zigbee.h
  * @brief Zigbee integration for AirCube
  *
- * Exposes temperature, humidity, eCO2, eTVOC, and AQI over Zigbee
+ * Exposes temperature, humidity, eCO2, eTVOC, and VOC Level over Zigbee
  * using standard ZCL clusters (temp/humidity), Basic cluster SWBuildID
  * for firmware version, a manufacturer-specific custom cluster (0xFC01)
  * for air quality metrics, and the standard Analog Output cluster (0x000D)
@@ -27,7 +27,7 @@ extern "C" {
  * Configures the ESP32-H2 as a Zigbee End Device with:
  *   - Temperature Measurement cluster (0x0402)
  *   - Relative Humidity cluster (0x0405)
- *   - Custom cluster (0xFC01) for eCO2, eTVOC, AQI (TVOC-derived)
+ *   - Custom cluster (0xFC01) for eCO2, eTVOC, VOC Level (TVOC-derived)
  *   - Analog Output cluster (0x000D) for LED brightness
  *
  * On first boot (factory-new), the stack stays idle until the user
@@ -49,7 +49,7 @@ void zigbee_init(void);
  * @param humidity  Relative humidity in percent (0-100)
  * @param eco2      Equivalent CO2 in ppm
  * @param etvoc     Equivalent TVOC in ppb
- * @param aqi       TVOC-derived AQI (0-500) on attribute 0x0002
+ * @param aqi       TVOC-derived VOC Level (0-500) on attribute 0x0002
  */
 void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
                            int aqi);

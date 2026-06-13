@@ -10,7 +10,7 @@
  *   - Identify (0x0003)          : Standard identify
  *   - Temperature Meas (0x0402)  : Actual temperature in 0.01 C
  *   - Humidity Meas (0x0405)     : Actual humidity in 0.01 %
- *   - Custom (0xFC01)            : eCO2, eTVOC, AQI (TVOC-derived)
+ *   - Custom (0xFC01)            : eCO2, eTVOC, VOC Level (TVOC-derived)
  *   - Analog Output (0x000D)     : LED brightness (0-100)
  *
  * @author StuckAtPrototype, LLC
@@ -43,7 +43,7 @@ static const char *TAG = "zigbee";
 #define CUSTOM_CLUSTER_ID           0xFC01
 #define ATTR_ECO2_ID                0x0000   /* uint16 – ppm   */
 #define ATTR_ETVOC_ID               0x0001   /* uint16 – ppb   */
-#define ATTR_AQI_ID                 0x0002   /* uint16 – TVOC-derived AQI (0-500)   */
+#define ATTR_AQI_ID                 0x0002   /* uint16 – TVOC-derived VOC Level (0-500)   */
 
 /* Analog Output cluster (0x000D) for brightness – standard cluster so
    ZCL Write Attributes from coordinators is handled natively by ZBOSS. */
@@ -434,7 +434,7 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
         esp_zb_humidity_meas_cluster_create(&hum_cfg),
         ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
 
-    /* ---- Custom cluster 0xFC01 (eCO2, eTVOC, AQI) ---- */
+    /* ---- Custom cluster 0xFC01 (eCO2, eTVOC, VOC Level) ---- */
     esp_zb_attribute_list_t *custom_cluster = esp_zb_zcl_attr_list_create(CUSTOM_CLUSTER_ID);
 
     uint16_t default_val = 0;
@@ -543,7 +543,7 @@ static void configure_reporting(void)
     };
     esp_zb_zcl_update_reporting_info(&etvoc_rpt);
 
-    /* AQI (TVOC-derived): report every 60s max, or on 5-point change */
+    /* VOC Level (TVOC-derived): report every 60s max, or on 5-point change */
     esp_zb_zcl_reporting_info_t aqi_rpt = {
         .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
         .ep                 = AIRCUBE_ENDPOINT,

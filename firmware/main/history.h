@@ -31,7 +31,7 @@
  *
  * All temperature/humidity values are stored as int16 x100
  * (e.g., 25.43°C -> 2543, 65.21% -> 6521)
- * AQI/eCO2/eTVOC are stored as raw uint16 values.
+ * VOC Level/eCO2/eTVOC are stored as raw uint16 values.
  * sequence == 0xFFFF means the slot is erased/empty.
  */
 typedef struct __attribute__((packed)) {
@@ -45,9 +45,9 @@ typedef struct __attribute__((packed)) {
     int16_t  hum_min;       // Humidity minimum (x100 %)
     int16_t  hum_max;       // Humidity maximum (x100 %)
 
-    uint16_t aqi_avg;       // AQI average
-    uint16_t aqi_min;       // AQI minimum
-    uint16_t aqi_max;       // AQI maximum
+    uint16_t aqi_avg;       // VOC Level average
+    uint16_t aqi_min;       // VOC Level minimum
+    uint16_t aqi_max;       // VOC Level maximum
 
     uint16_t eco2_avg;      // eCO2 average (ppm)
     uint16_t eco2_min;      // eCO2 minimum (ppm)
@@ -106,7 +106,7 @@ esp_err_t history_init(void);
  *
  * @param temp_c   Temperature in Celsius
  * @param humidity Relative humidity in percent
- * @param aqi      Air Quality Index
+ * @param aqi      VOC Level
  * @param eco2     Equivalent CO2 in ppm
  * @param etvoc    Equivalent TVOC in ppb
  */

@@ -60,7 +60,7 @@ ANALOG_OUTPUT_CLUSTER_ID = 0x000D
         endpoint_id=10,
         device_class=SensorDeviceClass.AQI,
         state_class=SensorStateClass.MEASUREMENT,
-        fallback_name="AQI (TVOC)",
+        fallback_name="VOC Level (TVOC)",
     )
     .number(
         "present_value",

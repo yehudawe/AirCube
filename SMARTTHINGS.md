@@ -1,6 +1,6 @@
 # Connecting AirCube to SmartThings (Samsung hub)
 
-This guide walks you through pairing AirCube to a **SmartThings-compatible Zigbee hub** and installing the community **AirCube Zigbee** Edge driver so you get **temperature, humidity, eCO2, eTVOC, and AQI** in the SmartThings app.
+This guide walks you through pairing AirCube to a **SmartThings-compatible Zigbee hub** and installing the community **AirCube Zigbee** Edge driver so you get **temperature, humidity, eCO2, eTVOC, and VOC Level** in the SmartThings app.
 
 > **Default behavior:** Without this driver, SmartThings often joins AirCube as a generic **humidity / temperature** device. You only get **temp and humidity**. The Edge driver adds the **air quality** sensors over Zigbee cluster `0xFC01` (same idea as the [ZHA quirk](zha/aircube.py) and [Zigbee2MQTT converter](z2m/aircube.js)).
 
@@ -31,7 +31,7 @@ See the [README](README.md) LED / button table if you need a refresher.
 3. Wait until AirCube appears and finish naming / room assignment.
 
 **Check:** Open the new device — you should see **temperature** and **humidity**.  
-**eCO2, TVOC, and AQI will not appear yet** until the **AirCube Zigbee** driver is installed and selected (next steps).
+**eCO2, TVOC, and VOC Level will not appear yet** until the **AirCube Zigbee** driver is installed and selected (next steps).
 
 ---
 
@@ -190,7 +190,7 @@ Gas sensors may read **0** for the first few minutes after power-on — that is 
 |---------|-------------|
 | Only temp / humidity | Driver not applied — repeat [Step 9](#step-9--use-the-aircube-zigbee-driver-for-your-device). |
 | `drivers:install` **400 Bad Request** | Use **hub UUID**, not sticker id. Run **`channels:enroll`** for the same channel first. |
-| eCO2 / TVOC / AQI stuck at 0 | Wait **3–5+ minutes** after power-on. Ensure driver is **AirCube Zigbee** and hub is **online**. |
+| eCO2 / TVOC / VOC Level stuck at 0 | Wait **3–5+ minutes** after power-on. Ensure driver is **AirCube Zigbee** and hub is **online**. |
 | CLI / channel errors | Run `smartthings logout` then repeat the command that triggered login (browser). If you use a **PAT** instead, confirm it includes **channel** read/write. See [driver channels](https://developer.smartthings.com/docs/devices/hub-connected/driver-channels). |
 
 ---

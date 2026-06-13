@@ -1,6 +1,6 @@
 # AirCube
 
-**Know your air.** AirCube is a desktop air quality monitor with built-in **Home Assistant** support over **Zigbee**. It tracks temperature, humidity, eCO2, TVOC, and AQI -- showing air quality as a single, glanceable LED color and reporting every reading to your smart home.
+**Know your air.** AirCube is a desktop air quality monitor with built-in **Home Assistant** support over **Zigbee**. It tracks temperature, humidity, eCO2, TVOC, and VOC Level -- showing air quality as a single, glanceable LED color and reporting every reading to your smart home.
 
 Works standalone out of the box. Pairs with Home Assistant in minutes. Other platforms are supported through **[community-contributed extensions](#community-extensions)**.
 
@@ -25,7 +25,7 @@ Works standalone out of the box. Pairs with Home Assistant in minutes. Other pla
 
 The color shifts smoothly as conditions change. No app needed -- just glance at it.
 
-> **Firmware 1.5.0 and above** drive the LED from **canonical AQI** (TVOC-derived, absolute). The color is a smooth green-to-red gradient -- same feel as older firmware, but tied to fixed indoor-air bands instead of the relative AQI-S baseline. See **[LED Reference](#led-reference)** for the exact mapping. Firmware **1.4.3 and below** used the same gradient shape, but driven by **AQI-S** instead.
+> **Firmware 1.5.0 and above** drive the LED from **canonical VOC Level** (TVOC-derived, absolute). The color is a smooth green-to-red gradient -- same feel as older firmware, but tied to fixed indoor-air bands instead of the relative AQI-S baseline. See **[LED Reference](#led-reference)** for the exact mapping. Firmware **1.4.3 and below** used the same gradient shape, but driven by **AQI-S** instead.
 
 **4. Adjust brightness** -- Press the button to cycle through brightness levels.
 
@@ -37,8 +37,8 @@ That's it. AirCube works out of the box with no setup, no accounts, and no Wi-Fi
 
 | Measurement | Range | What It Tells You |
 |-------------|-------|------------------|
-| **AQI** (Air Quality Index) | 0 -- 500 | TVOC-derived score against fixed indoor-air bands (firmware 1.5.0+; 0--500 scale in 1.5.1+) |
-| **AQI-S** (relative AQI, ScioSense) | 0 -- 500 | ENS161 relative score using the past 24 h as a baseline (**USB serial only**) |
+| **VOC Level** | 0 -- 500 | TVOC-derived score against fixed indoor-air bands (firmware 1.5.0+; 0--500 scale in 1.5.1+) |
+| **AQI-S** (relative VOC Level, ScioSense) | 0 -- 500 | ENS161 relative score using the past 24 h as a baseline (**USB serial only**) |
 | **eCO2** (equivalent CO2) | 400 -- 65,000 ppm | Estimated CO2 level derived from detected VOCs |
 | **eTVOC** (equivalent Total VOC) | 0 -- 65,000 ppb | Total volatile organic compound concentration |
 | **Temperature** | | Room temperature in Celsius |
@@ -52,9 +52,9 @@ AirCube uses a **ScioSense ENS161** gas sensor and an **ENS210** temperature/hum
 
 **eTVOC (ppb)** -- Total volatile organic compounds in the air. Spikes after cooking or cleaning are normal; sustained high readings mean you should ventilate.
 
-**AQI (0--500)** -- TVOC mapped to a fixed indoor-air scale (firmware 1.5.1+). Linear ramp between band edges; TVOC-only (eCO2 does not affect AQI). Reported over Zigbee and USB serial.
+**VOC Level (0--500)** -- TVOC mapped to a fixed indoor-air scale (firmware 1.5.1+). Linear ramp between band edges; TVOC-only (eCO2 does not affect VOC Level). Reported over Zigbee and USB serial.
 
-| Rating | LED color | AQI | TVOC (ppb) |
+| Rating | LED color | VOC Level | TVOC (ppb) |
 |--------|-----------|-----|------------|
 | Excellent | Green | 0 -- 15 | 0 -- 65 |
 | Good | Green → lime | 15 -- 50 | 65 -- 220 |
@@ -62,11 +62,11 @@ AirCube uses a **ScioSense ENS161** gas sensor and an **ENS210** temperature/hum
 | Poor | Yellow → orange → red | 100 -- 200 | 650 -- 2,200 |
 | Unhealthy | Red | 200 -- 500 | 2,200 -- 5,500 |
 
-The LED color is derived from TVOC/AQI alone (eCO2 does not drive the LED). AQI is linear between band edges, so the LED fades smoothly.
+The LED color is derived from TVOC/VOC Level alone (eCO2 does not drive the LED). VOC Level is linear between band edges, so the LED fades smoothly.
 
-**AQI-S (0--500, USB serial only)** -- ScioSense relative score vs. the past 24 hours (**100** = average). Below 100 is better than recent history; above 100 is worse. Not an absolute clean/dirty reading -- use AQI, eCO2, or eTVOC for that.
+**AQI-S (0--500, USB serial only)** -- ScioSense relative score vs. the past 24 hours (**100** = average). Below 100 is better than recent history; above 100 is worse. Not an absolute clean/dirty reading -- use VOC Level, eCO2, or eTVOC for that.
 
-Only **AQI** drives the LED color. See **[LED Reference](#led-reference)**.
+Only **VOC Level** drives the LED color. See **[LED Reference](#led-reference)**.
 
 ### Warm-up and initial start-up
 
@@ -84,11 +84,11 @@ The ENS161 needs about **3 minutes** of warm-up in standard mode before readings
 
 ## Home Assistant Integration
 
-AirCube was designed for Home Assistant. It connects over **Zigbee** -- no USB cable to your server, no cloud, no Wi-Fi credentials to configure. Plug it in, pair it, and six entities show up automatically: temperature, humidity, eCO2, tVOC, AQI, and brightness.
+AirCube was designed for Home Assistant. It connects over **Zigbee** -- no USB cable to your server, no cloud, no Wi-Fi credentials to configure. Plug it in, pair it, and six entities show up automatically: temperature, humidity, eCO2, tVOC, VOC Level, and brightness.
 
 Once connected you can:
 - **Track air quality over time** with built-in history graphs
-- **Set up automations** -- turn on a fan when eCO2 gets too high, send a notification when AQI spikes
+- **Set up automations** -- turn on a fan when eCO2 gets too high, send a notification when VOC Level spikes
 - **Monitor every room** -- each AirCube pairs independently, name them however you like
 
 **You'll need:** a Zigbee coordinator dongle (we recommend the [SONOFF ZBDongle-E](https://sonoff.tech/product/gateway-and-sensors/sonoff-zigbee-3-0-usb-dongle-plus-e/), ~$13) plugged into your Home Assistant machine.
@@ -134,7 +134,7 @@ python aircube_app.py
 
 Select your serial port, click **Connect**, and you'll see live data.
 
-> **Tip:** Prefer a minimal taskbar-only view? See the companion [**AirCube Tray**](https://github.com/StuckAtPrototype/AirCubeTray) repo -- a lightweight Windows system-tray app that shows AQI as a live, color-coded number in your taskbar. It ships its own installer.
+> **Tip:** Prefer a minimal taskbar-only view? See the companion [**AirCube Tray**](https://github.com/StuckAtPrototype/AirCubeTray) repo -- a lightweight Windows system-tray app that shows VOC Level as a live, color-coded number in your taskbar. It ships its own installer.
 
 ---
 
@@ -152,16 +152,16 @@ Latest release: [GitHub Releases](https://github.com/StuckAtPrototype/AirCube/re
 
 ### Firmware 1.5.0 and above (current)
 
-The LED is a continuous green-to-red gradient driven by **canonical AQI** (TVOC-derived). The hue moves linearly with AQI: pure green up to AQI 10, then fading green → lime → yellow → orange → red, reaching full red at AQI 200. eCO2 does **not** affect the LED.
+The LED is a continuous green-to-red gradient driven by **canonical VOC Level** (TVOC-derived). The hue moves linearly with VOC Level: pure green up to VOC Level 10, then fading green → lime → yellow → orange → red, reaching full red at VOC Level 200. eCO2 does **not** affect the LED.
 
 ```mermaid
 flowchart LR
-    A["AQI 0–10<br/>TVOC 0–~43 ppb"] --> G["Steady green"]
-    B["AQI 10–200<br/>TVOC ~43–2 200 ppb"] --> GR["Green → lime → yellow → orange → red"]
-    C["AQI 200+<br/>TVOC 2 200+ ppb"] --> R["Steady red"]
+    A["VOC Level 0–10<br/>TVOC 0–~43 ppb"] --> G["Steady green"]
+    B["VOC Level 10–200<br/>TVOC ~43–2 200 ppb"] --> GR["Green → lime → yellow → orange → red"]
+    C["VOC Level 200+<br/>TVOC 2 200+ ppb"] --> R["Steady red"]
 ```
 
-| LED color | AQI | TVOC (ppb) | Rating |
+| LED color | VOC Level | TVOC (ppb) | Rating |
 |-----------|-----|------------|--------|
 | Steady green | 0 -- 10 | 0 -- ~43 | Excellent |
 | Green → lime | 10 -- 50 | ~43 -- 220 | Good |
@@ -170,11 +170,11 @@ flowchart LR
 | Steady red | 200+ | 2 200+ | Unhealthy |
 | Flashing blue | -- | -- | Zigbee pairing mode |
 
-Key gradient landmarks: **yellow** around AQI 105 (~730 ppb) and **orange** around AQI 150 (~1,460 ppb). Over **Zigbee**, TVOC-derived AQI is reported alongside eCO2, eTVOC, temperature, humidity, and brightness. **AQI-S** is available over **USB serial** only and does not drive the LED.
+Key gradient landmarks: **yellow** around VOC Level 105 (~730 ppb) and **orange** around VOC Level 150 (~1,460 ppb). Over **Zigbee**, TVOC-derived VOC Level is reported alongside eCO2, eTVOC, temperature, humidity, and brightness. **AQI-S** is available over **USB serial** only and does not drive the LED.
 
 ### Firmware 1.4.3 and below (legacy)
 
-Same gradient shape as above, but driven by **AQI-S** (relative, 24-hour baseline) instead of canonical AQI:
+Same gradient shape as above, but driven by **AQI-S** (relative, 24-hour baseline) instead of canonical VOC Level:
 
 | LED | Meaning |
 |-----|---------|
@@ -207,7 +207,7 @@ Same gradient shape as above, but driven by **AQI-S** (relative, 24-hour baselin
 - Linux users: add yourself to the `dialout` group and re-login.
 
 
-**Home Assistant: eCO2, TVOC, or AQI sensors are missing**
+**Home Assistant: eCO2, TVOC, or VOC Level sensors are missing**
 - The custom quirk or converter isn't loaded yet. See the [Home Assistant guide](HOME_ASSISTANT.md) for step-by-step instructions.
 
 **Home Assistant: AirCube won't pair**

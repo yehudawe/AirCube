@@ -159,8 +159,8 @@ def main():
     ax_temp_hum.legend(loc="upper left")
     ax_temp_hum.grid(True)
 
-    ax_aqi.plot(x_data, aqi_data, label="AQI")
-    ax_aqi.set_ylabel("AQI")
+    ax_aqi.plot(x_data, aqi_data, label="VOC Level")
+    ax_aqi.set_ylabel("VOC Level")
     ax_aqi.legend(loc="upper left")
     ax_aqi.grid(True)
 
@@ -232,8 +232,8 @@ def main():
             ax_temp_hum.legend(loc="upper left")
             ax_temp_hum.grid(True)
 
-            ax_aqi.plot(x_data, aqi_data, label="AQI")
-            ax_aqi.set_ylabel("AQI")
+            ax_aqi.plot(x_data, aqi_data, label="VOC Level")
+            ax_aqi.set_ylabel("VOC Level")
             ax_aqi.legend(loc="upper left")
             ax_aqi.grid(True)
 

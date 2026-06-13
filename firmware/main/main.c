@@ -28,19 +28,19 @@ static const char *TAG = "main";
 static uint32_t sensor_readout_period_ms = 1000;
 static SemaphoreHandle_t readout_period_mutex = NULL;
 
-// LED color mapping: continuous green->red gradient from canonical AQI (TVOC-derived).
+// LED color mapping: continuous green->red gradient from canonical VOC Level (TVOC-derived).
 #define AQI_MIN 0
 #define AQI_MAX 200
 #define AQI_GREEN_THRESHOLD 10  // Values 0-10 are pure green
 
 #define HUE_GREEN  21845  // 120 deg - pure green
 
-// AQI values at each TVOC band edge (matches published AQI/VOC table):
-//   0-65 ppb      -> AQI 0-15   (Excellent)
-//   65-220 ppb    -> AQI 15-50  (Good)
-//   220-650 ppb   -> AQI 50-100 (Moderate)
-//   650-2200 ppb  -> AQI 100-200 (Poor)
-//   2200-5500 ppb -> AQI 200-500 (Unhealthy)
+// VOC Level values at each TVOC band edge (matches published VOC table):
+//   0-65 ppb      -> VOC Level 0-15   (Excellent)
+//   65-220 ppb    -> VOC Level 15-50  (Good)
+//   220-650 ppb   -> VOC Level 50-100 (Moderate)
+//   650-2200 ppb  -> VOC Level 100-200 (Poor)
+//   2200-5500 ppb -> VOC Level 200-500 (Unhealthy)
 // Driven by TVOC alone; eCO2 is reported separately as raw ppm.
 static const int AQI_TVOC_THRESHOLDS_PPB[5] = { 65, 220, 650, 2200, 5500 };
 static const uint16_t BAND_AQI_TVOC[6] = {
@@ -52,7 +52,7 @@ static const uint16_t BAND_AQI_TVOC[6] = {
     500   // Level 5 - Unhealthy cap           (5500 ppb)
 };
 
-// Canonical AQI (TVOC-derived) for LED color mapping
+// Canonical VOC Level (TVOC-derived) for LED color mapping
 static int current_aqi = 0;
 
 // Static variables for smooth LED color transitions
@@ -85,19 +85,19 @@ void set_sensor_readout_period_ms(uint32_t period)
 }
 
 /**
- * @brief Map AQI value to hue
+ * @brief Map VOC Level value to hue
  * 
- * Maps canonical AQI (TVOC-derived, 0-500) to LED hue:
- * - AQI 0-10: pure green (no color change)
- * - AQI 10-200: smooth gradient from green to red
- * - AQI 200+: full red (handled by caller)
+ * Maps canonical VOC Level (TVOC-derived, 0-500) to LED hue:
+ * - VOC Level 0-10: pure green (no color change)
+ * - VOC Level 10-200: smooth gradient from green to red
+ * - VOC Level 200+: full red (handled by caller)
  * 
- * @param aqi Air Quality Index value
+ * @param aqi VOC Level value
  * @return 16-bit hue value (21845 = green, 0 = red)
  */
 static uint16_t aqi_to_hue(int aqi)
 {
-    // Clamp AQI to valid range
+    // Clamp VOC Level to valid range
     if (aqi < AQI_MIN) aqi = AQI_MIN;
     if (aqi > AQI_MAX) aqi = AQI_MAX;
     
@@ -107,9 +107,9 @@ static uint16_t aqi_to_hue(int aqi)
     }
     
     // For values 10-200, map smoothly from green to red
-    // Map AQI from [10, 200] to ratio [0.0, 1.0] for smooth gradient
-    // When AQI = 10: ratio = 0.0 (green)
-    // When AQI = 200: ratio = 1.0 (red)
+    // Map VOC Level from [10, 200] to ratio [0.0, 1.0] for smooth gradient
+    // When VOC Level = 10: ratio = 0.0 (green)
+    // When VOC Level = 200: ratio = 1.0 (red)
     float ratio = (float)(aqi - AQI_GREEN_THRESHOLD) / (float)(AQI_MAX - AQI_GREEN_THRESHOLD);
     
     // Linear interpolation from green to red
@@ -121,7 +121,7 @@ static uint16_t aqi_to_hue(int aqi)
 }
 
 /**
- * @brief Map TVOC ppb to a continuous AQI level position 0.0..5.0
+ * @brief Map TVOC ppb to a continuous VOC Level position 0.0..5.0
  *
  * Uses AQI_TVOC_THRESHOLDS_PPB (65, 220, 650, 2200, 5500 ppb).
  */
@@ -147,14 +147,14 @@ static float aqi_tvoc_to_level_pos(int value)
 }
 
 /**
- * @brief Compute the canonical AirCube AQI from TVOC.
+ * @brief Compute the canonical AirCube VOC Level from TVOC.
  *
- * Maps TVOC ppb to AQI 0-500 using fixed indoor-air bands (see BAND_AQI_TVOC).
- * TVOC-only; eCO2 is reported separately. LED color follows this AQI via
+ * Maps TVOC ppb to VOC Level 0-500 using fixed indoor-air bands (see BAND_AQI_TVOC).
+ * TVOC-only; eCO2 is reported separately. LED color follows this VOC Level via
  * aqi_to_hue() (green at 0-10, gradient to red at 200+).
  *
  * @param etvoc Equivalent TVOC in ppb
- * @return AQI value in [0, 500]
+ * @return VOC Level value in [0, 500]
  */
 static uint16_t aqi_calculate(int etvoc)
 {
@@ -284,7 +284,7 @@ void sensor_task(void *pvParameters)
         int etvoc = ens16x_read_etvoc();
         int eco2 = ens16x_read_eco2();
         int aqi_s = ens16x_read_aqi();         // ENS161 relative AQI-S (0-500)
-        int aqi = aqi_calculate(etvoc);        // Canonical AirCube AQI (TVOC-derived, 0-500)
+        int aqi = aqi_calculate(etvoc);        // Canonical AirCube VOC Level (TVOC-derived, 0-500)
         int aqi_uba = ens16x_read_aqi_uba();
         enum ENS_STATUS ens16x_status = ens16x_get_status();
 
@@ -314,7 +314,7 @@ void sensor_task(void *pvParameters)
         ESP_LOGI(TAG, "=== Sensor Data ===");
         ESP_LOGI(TAG, "ENS210 - Status: 0x%02X, Temperature: %.2f°C, Humidity: %.2f%%", 
                  ens210_status, temp_c, humidity);
-        ESP_LOGI(TAG, "ENS16X - Status: %s, eTVOC: %d ppb, eCO2: %d ppm, AQI: %d, AQI-S: %d, AQI-UBA: %d",
+        ESP_LOGI(TAG, "ENS16X - Status: %s, eTVOC: %d ppb, eCO2: %d ppm, VOC Level: %d, AQI-S: %d, AQI-UBA: %d",
                  ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba);
         
         // Send sensor data as JSON over serial
@@ -322,7 +322,7 @@ void sensor_task(void *pvParameters)
                                ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba);
         
         // Record sample into history accumulator and check for 10-min flush.
-        // History stores the new canonical AQI (TVOC-derived); flushed entries
+        // History stores the new canonical VOC Level (TVOC-derived); flushed entries
         // from before this change still hold the old AQI-S value in the same
         // columns - the on-flash byte layout did not change.
         history_record_sample(temp_c, humidity, aqi, eco2, etvoc);
@@ -347,7 +347,7 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "AirCube");
 
-    ESP_LOGI(TAG, "LED color: continuous green->red from canonical AQI (TVOC-derived)");
+    ESP_LOGI(TAG, "LED color: continuous green->red from canonical VOC Level (TVOC-derived)");
 
     // Configure power management
     // ESP32-H2 valid max frequencies: 96, 64, or 48 MHz. Min = XTAL = 32 MHz.
@@ -436,7 +436,7 @@ void app_main(void)
                 SENSOR_TASK_PRIORITY, NULL);
     ESP_LOGI(TAG, "Sensor task created");
 
-    // Main loop for LED color based on AQI (with pairing override)
+    // Main loop for LED color based on VOC Level (with pairing override)
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(20));  // Update LED every 20ms for smooth transitions
         
@@ -445,12 +445,12 @@ void app_main(void)
             uint32_t tick_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
             bool on = ((tick_ms / 250) % 2) == 0;
             led_set_color(on ? LED_COLOR_BLUE : LED_COLOR_OFF);
-            continue;   // Skip normal AQI color while pairing
+            continue;   // Skip normal VOC Level color while pairing
         }
         
-        // ── Normal mode: continuous green->red from canonical AQI ──
+        // ── Normal mode: continuous green->red from canonical VOC Level ──
         if (current_aqi >= AQI_MAX) {
-            target_hue = 0;  // Red for high AQI
+            target_hue = 0;  // Red for high VOC Level
         } else {
             target_hue = aqi_to_hue(current_aqi);
         }

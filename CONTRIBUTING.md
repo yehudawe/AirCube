@@ -127,7 +127,7 @@ app_main()
   ├── Init: NVS, I2C, serial, LED, history, button, ENS210, ENS16X, Zigbee
   ├── xTaskCreate(sensor_task)    -- reads sensors, sends JSON, logs history, pushes Zigbee
   ├── xTaskCreate(command_task)   -- polls for incoming serial commands
-  └── Main loop (20ms tick)       -- smooth LED color transitions based on AQI
+  └── Main loop (20ms tick)       -- smooth LED color transitions based on VOC Level
 ```
 
 ### Data flow
@@ -137,7 +137,7 @@ ENS210 (I2C)  ──► sensor_task ──► serial JSON output (USB)
 ENS16X (I2C)  ──►      │       ├─► history_record_sample() ──► flash ring buffer
                         │       └─► zigbee_update_sensors()  ──► Zigbee attribute reports (every 10s)
                         │
-                   AQI value ──► main loop ──► LED color (continuous green-to-red from canonical AQI)
+             VOC Level value ──► main loop ──► LED color (continuous green-to-red from canonical VOC Level)
                                                     ▲
               Home Assistant ──► Zigbee Analog Output write ──► led_set_intensity() (brightness)
 ```
@@ -147,7 +147,7 @@ ENS16X (I2C)  ──►      │       ├─► history_record_sample() ──�
 **Sensors**
 
 - `ens210.c` -- I2C driver for the ENS210 temperature/humidity sensor. Exposes `ens210_get_temperature()`, `ens210_get_humidity()`.
-- `ens16x_driver.c` -- I2C driver for the ENS16X air quality sensor. Reads eTVOC, eCO2, AQI, and AQI-UBA. Accepts environmental compensation data from the ENS210.
+- `ens16x_driver.c` -- I2C driver for the ENS16X air quality sensor. Reads eTVOC, eCO2, VOC Level, and AQI-UBA. Accepts environmental compensation data from the ENS210.
 
 **LED**
 
@@ -158,7 +158,7 @@ ENS16X (I2C)  ──►      │       ├─► history_record_sample() ──�
 **Communication**
 
 - `serial_protocol.c` -- JSON-over-USB serial interface. Sends periodic sensor data, accepts commands (see Serial Protocol below).
-- `zigbee.c` -- Registers a Zigbee End Device on the ESP32-H2's native 802.15.4 radio. Exposes temperature/humidity via standard ZCL clusters, eCO2/eTVOC/AQI via custom cluster 0xFC01, and LED brightness via the standard Analog Output cluster (0x000D).
+- `zigbee.c` -- Registers a Zigbee End Device on the ESP32-H2's native 802.15.4 radio. Exposes temperature/humidity via standard ZCL clusters, eCO2/eTVOC/VOC Level via custom cluster 0xFC01, and LED brightness via the standard Analog Output cluster (0x000D).
 
 **Storage**
 
@@ -211,7 +211,7 @@ All commands are JSON with a `"cmd"` field. Send a complete JSON object followed
 
 ### History slot format
 
-Each history entry contains min/avg/max for all five measurements over one 5-minute window. Temperature and humidity are stored as `int16 x 100` (e.g., 2345 = 23.45 C). AQI, eCO2, and eTVOC are raw uint16 values.
+Each history entry contains min/avg/max for all five measurements over one 5-minute window. Temperature and humidity are stored as `int16 x 100` (e.g., 2345 = 23.45 C). VOC Level, eCO2, and eTVOC are raw uint16 values.
 
 Abbreviated JSON keys in `get_history` responses:
 
@@ -220,7 +220,7 @@ Abbreviated JSON keys in `get_history` responses:
 | `seq` | Sequence number |
 | `t_a`, `t_n`, `t_x` | Temperature avg, min, max (x100 C) |
 | `h_a`, `h_n`, `h_x` | Humidity avg, min, max (x100 %) |
-| `q_a`, `q_n`, `q_x` | AQI avg, min, max |
+| `q_a`, `q_n`, `q_x` | VOC Level avg, min, max |
 | `c_a`, `c_n`, `c_x` | eCO2 avg, min, max (ppm) |
 | `v_a`, `v_n`, `v_x` | eTVOC avg, min, max (ppb) |
 
@@ -261,7 +261,7 @@ pip install -r requirements.txt
 
 ### aircube_app.py -- Full desktop GUI
 
-Live sensor display, color-coded AQI, three-panel charts (temp/humidity, AQI, gas levels), optional CSV logging, configurable history depth (50--1000 points).
+Live sensor display, color-coded VOC Level, three-panel charts (temp/humidity, VOC Level, gas levels), optional CSV logging, configurable history depth (50--1000 points).
 
 ```bash
 python aircube_app.py
@@ -269,7 +269,7 @@ python aircube_app.py
 
 ### AirCube Tray -- system tray monitor (separate repo)
 
-For a minimal Windows taskbar-only view of AQI, see the companion [**AirCubeTray** repo](https://github.com/StuckAtPrototype/AirCubeTray). It ships its own installer and auto-detects the AirCube over USB.
+For a minimal Windows taskbar-only view of VOC Level, see the companion [**AirCubeTray** repo](https://github.com/StuckAtPrototype/AirCubeTray). It ships its own installer and auto-detects the AirCube over USB.
 
 ### Other scripts
 
@@ -299,7 +299,7 @@ The standalone tray app build lives in its own repo: [AirCubeTray](https://githu
 |------|------------|
 | ESP32-H2-MINI-1 | MCU with 802.15.4 (Zigbee/Thread) radio |
 | ENS210 | Temperature and humidity sensor (I2C) |
-| ENS161 / ENS16X | Air quality sensor -- eTVOC, eCO2, AQI (I2C) |
+| ENS161 / ENS16X | Air quality sensor -- eTVOC, eCO2, VOC Level (I2C) |
 | WS2812 x3 | RGB LEDs |
 | USB-C connector | Power and data |
 | Tactile button | Brightness control and Zigbee pairing |

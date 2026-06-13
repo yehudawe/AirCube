@@ -2,7 +2,7 @@
 -- Copyright 2026 StuckAtPrototype contributors
 -- SPDX-License-Identifier: Apache-2.0
 --
--- AirCube (StuckAtPrototype) — custom cluster 0xFC01 for eCO2, eTVOC, AQI.
+-- AirCube (StuckAtPrototype) — custom cluster 0xFC01 for eCO2, eTVOC, VOC Level.
 -- Reference: https://github.com/StuckAtPrototype/AirCube
 
 local capabilities = require "st.capabilities"
@@ -49,7 +49,7 @@ end
 
 local function emit_aqi(driver, device, value, zb_rx)
   if value.value ~= nil and value.value < 65535 then
-    -- ENS16x IAQI is 1–5; airQualitySensor uses the same 1–5 index on SmartThings
+    -- ENS16x VOC index is 1–5; airQualitySensor uses the same 1–5 index on SmartThings
     device:emit_event(capabilities.airQualitySensor.airQuality({ value = value.value }))
   end
 end

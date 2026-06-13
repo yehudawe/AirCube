@@ -1,6 +1,6 @@
 # Connecting AirCube to Home Assistant
 
-This guide walks you through adding your AirCube air quality monitor to Home Assistant over Zigbee. After setup, you'll have live temperature, humidity, eCO2, eTVOC, and AQI readings plus a brightness slider in your smart home dashboard.
+This guide walks you through adding your AirCube air quality monitor to Home Assistant over Zigbee. After setup, you'll have live temperature, humidity, eCO2, eTVOC, and VOC Level readings plus a brightness slider in your smart home dashboard.
 
 The AirCube works with both **ZHA** (built-in) and **Zigbee2MQTT**. Pick whichever you already use. If you're starting fresh, ZHA is simpler.
 
@@ -39,7 +39,7 @@ If you already have ZHA running with your coordinator, skip to A2.
 
 ## A2 -- Add the AirCube Quirk
 
-The AirCube uses a custom Zigbee cluster (0xFC01) for air quality data and a standard Analog Output cluster (0x000D) for LED brightness. The quirk below tells ZHA to create **sensor entities** for eCO2, eTVOC, and AQI, plus a **brightness slider** (0--100%).
+The AirCube uses a custom Zigbee cluster (0xFC01) for air quality data and a standard Analog Output cluster (0x000D) for LED brightness. The quirk below tells ZHA to create **sensor entities** for eCO2, eTVOC, and VOC Level, plus a **brightness slider** (0--100%).
 
 1. Install the **File editor** add-on if you don't have it:
    - **Settings > Add-ons > Add-on Store** -- search **File editor**, install, start it.
@@ -115,7 +115,7 @@ ANALOG_OUTPUT_CLUSTER_ID = 0x000D
         endpoint_id=10,
         device_class=SensorDeviceClass.AQI,
         state_class=SensorStateClass.MEASUREMENT,
-        fallback_name="AQI (TVOC)",
+        fallback_name="VOC Level (TVOC)",
     )
     .number(
         "present_value",
@@ -170,10 +170,10 @@ Go to **Settings > Devices & Services > ZHA** and click on the AirCube device. Y
 | Humidity | Relative humidity | % |
 | Equivalent CO2 | eCO2 concentration (estimated) | ppm |
 | tVOC | eTVOC concentration | ppb |
-| AQI (TVOC) | TVOC-derived AQI (0--500) | -- |
+| VOC Level (TVOC) | TVOC-derived VOC Level (0--500) | -- |
 | Brightness | LED brightness (slider) | 0--100 |
 
-> Temperature and humidity are detected automatically by ZHA. eCO2, eTVOC, and AQI come from the custom quirk. The brightness slider uses the standard Analog Output cluster.
+> Temperature and humidity are detected automatically by ZHA. eCO2, eTVOC, and VOC Level come from the custom quirk. The brightness slider uses the standard Analog Output cluster.
 
 ---
 
@@ -258,7 +258,7 @@ Both converter files are in the [`z2m/`](z2m/) folder of this repo.
 
 ## B7 -- Verify Sensors
 
-Go to **Settings > Devices & Services > MQTT** and click on the AirCube. You should see six entities: Temperature, Humidity, eCO2, eTVOC, AQI (TVOC-derived), and Brightness.
+Go to **Settings > Devices & Services > MQTT** and click on the AirCube. You should see six entities: Temperature, Humidity, eCO2, eTVOC, VOC Level (TVOC-derived), and Brightness.
 
 ---
 
@@ -273,10 +273,10 @@ Edit your dashboard, click **Add Card**, choose **Entities**, and select:
 - AirCube Humidity
 - AirCube Equivalent CO2
 - AirCube tVOC
-- AirCube AQI (TVOC)
+- AirCube VOC Level (TVOC)
 - AirCube Brightness
 
-### AQI Gauge
+### VOC Level Gauge
 
 Add a **Manual card** and paste:
 
@@ -310,9 +310,9 @@ entities:
 
 ## LED Reference
 
-The LED follows **canonical AQI** (TVOC-derived) on a continuous green-to-red gradient. The hue moves linearly with AQI, so the color fades smoothly rather than stepping between bands. eCO2 does **not** affect the LED.
+The LED follows **canonical VOC Level** (TVOC-derived) on a continuous green-to-red gradient. The hue moves linearly with VOC Level, so the color fades smoothly rather than stepping between bands. eCO2 does **not** affect the LED.
 
-| LED color | AQI | TVOC (ppb) | Rating |
+| LED color | VOC Level | TVOC (ppb) | Rating |
 |-----------|-----|------------|--------|
 | Steady green | 0--10 | 0--~43 | Excellent |
 | Green → lime | 10--50 | ~43--220 | Good |
@@ -322,7 +322,7 @@ The LED follows **canonical AQI** (TVOC-derived) on a continuous green-to-red gr
 | Flashing blue | -- | -- | Pairing mode (searching for Zigbee network) |
 | Off | -- | -- | Brightness set to 0 (press button to cycle) |
 
-> On firmware **1.4.3 and below**, the same gradient was driven by **AQI-S** (relative) instead of canonical AQI. See the [README LED Reference](README.md#led-reference) for the full mapping.
+> On firmware **1.4.3 and below**, the same gradient was driven by **AQI-S** (relative) instead of canonical VOC Level. See the [README LED Reference](README.md#led-reference) for the full mapping.
 
 ### Button
 
@@ -341,7 +341,7 @@ The LED follows **canonical AQI** (TVOC-derived) on a continuous green-to-red gr
 - Move the AirCube closer to the coordinator. Zigbee works best within 10-30 meters indoors.
 - Check that your coordinator is online in the integration dashboard.
 
-### Temperature and humidity show up but eCO2 / eTVOC / AQI are missing
+### Temperature and humidity show up but eCO2 / eTVOC / VOC Level are missing
 
 - The custom quirk (ZHA) or converter (Z2M) is not loaded.
 - **ZHA:** Check that `custom_quirks_path` is set in `configuration.yaml` and the `aircube.py` file is in the right folder. The path in `configuration.yaml` must be `/config/custom_zha_quirks/` (not `/homeassistant/...`). Restart Home Assistant, then remove and re-pair the AirCube.
@@ -351,7 +351,7 @@ The LED follows **canonical AQI** (TVOC-derived) on a continuous green-to-red gr
 - **Z2M 2.x:** Make sure you're using `aircube.mjs` (not `aircube.js`). Z2M 2.x requires ES module format. If Z2M renames the file to `aircube.mjs.invalid`, the converter has a load error — check the Z2M logs.
 - **Z2M 1.x:** Check that `external_converters` is in the Z2M `configuration.yaml` and `aircube.js` is in the `zigbee2mqtt` folder. Restart Zigbee2MQTT.
 
-### eCO2 / eTVOC / AQI values are stuck at 0
+### eCO2 / eTVOC / VOC Level values are stuck at 0
 
 This is normal for the first 5 minutes after power-on. The air quality sensor needs to warm up. Once ready, values will start updating (typically within 60 seconds).
 
@@ -361,7 +361,7 @@ Hold the button for 3 seconds to re-enter pairing mode. If the device won't leav
 
 ### Sensor values only update every 10 seconds
 
-This is by design. The AirCube pushes new sensor values over Zigbee every 10 seconds. Additionally, the ZCL reporting configuration will send an immediate update when a reading changes significantly (temperature by 0.5 C, eCO2 by 50 ppm, AQI by 5 points, etc.).
+This is by design. The AirCube pushes new sensor values over Zigbee every 10 seconds. Additionally, the ZCL reporting configuration will send an immediate update when a reading changes significantly (temperature by 0.5 C, eCO2 by 50 ppm, VOC Level by 5 points, etc.).
 
 ### Can I use multiple AirCubes?
 
