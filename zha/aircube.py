@@ -99,9 +99,9 @@ if _HAS_QUIRKS_V2:
             AirQualityCluster.AttributeDefs.aqi.name,
             AirQualityCluster.cluster_id,
             endpoint_id=10,
-            device_class=SensorDeviceClass.AQI,
             state_class=SensorStateClass.MEASUREMENT,
-            fallback_name="VOC Level (TVOC)",
+            translation_key="voc_level",
+            fallback_name="VOC Level",
         )
         .number(
             "present_value",
