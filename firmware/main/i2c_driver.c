@@ -137,6 +137,25 @@ esp_err_t i2c_driver_read_raw(uint8_t device_addr, uint8_t *data, size_t len)
     return i2c_master_receive(dev_handle, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 }
 
+bool i2c_driver_probe(uint8_t device_addr)
+{
+    if (!i2c_initialized || i2c_bus_handle == NULL) {
+        ESP_LOGE(TAG, "I2C driver not initialized");
+        return false;
+    }
+
+    // A NACK here just means the (optional) sensor is not fitted, which is an
+    // expected result during model detection - not a real error. Silence the
+    // ESP-IDF I2C master driver's NACK error logs only for this probe, then
+    // restore the previous level so genuine runtime faults are still reported.
+    esp_log_level_t prev = esp_log_level_get("i2c.master");
+    esp_log_level_set("i2c.master", ESP_LOG_NONE);
+    esp_err_t ret = i2c_master_probe(i2c_bus_handle, device_addr, I2C_MASTER_TIMEOUT_MS);
+    esp_log_level_set("i2c.master", prev);
+
+    return ret == ESP_OK;
+}
+
 void i2c_driver_deinit(void)
 {
     // Remove all cached device handles

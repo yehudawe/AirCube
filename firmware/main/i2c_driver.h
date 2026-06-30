@@ -33,6 +33,13 @@ esp_err_t i2c_driver_read(uint8_t device_addr, const uint8_t *reg_addr, size_t r
 // len: number of bytes to read
 esp_err_t i2c_driver_read_raw(uint8_t device_addr, uint8_t *data, size_t len);
 
+// Quietly probe whether a device acknowledges at the given address.
+// Intended for presence detection of optional sensors: a missing device is an
+// expected outcome, not a fault, so the low-level "i2c.master" NACK error logs
+// are suppressed for the duration of the probe. Returns true if the device ACKs.
+#include <stdbool.h>
+bool i2c_driver_probe(uint8_t device_addr);
+
 // Deinitialize I2C bus
 void i2c_driver_deinit(void);
 

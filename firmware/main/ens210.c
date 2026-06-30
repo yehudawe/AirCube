@@ -162,6 +162,16 @@ void ens210_init(void){
     uint8_t i2c_data[2];
     uint8_t i2c_byte_address[1];
 
+    ens210_present = false;
+
+    // Quietly check for an ACK at the ENS210 address first. On Pro hardware the
+    // ENS210 may be absent, so a no-ACK is a normal "not present" result, not a
+    // fault - skip cleanly without emitting I2C error logs.
+    if (!i2c_driver_probe(ENS210_I2C_ADDRESS)) {
+        ESP_LOGI("ens210", "ENS210 not present");
+        return;
+    }
+
     // Set the system into active mode (disable low power mode)
     // SYS_CTRL bit 0: LOW_POWER (0=disabled, device stays active)
     // Done before the PART_ID probe so the device is awake out of power-on standby.

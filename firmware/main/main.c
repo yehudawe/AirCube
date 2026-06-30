@@ -494,9 +494,9 @@ void app_main(void)
     // Initialize button for brightness control
     button_init();
     
-    // Initialize ENS210 temperature and humidity sensor
+    // Initialize ENS210 temperature and humidity sensor (Base; may be absent on Pro)
     ens210_init();
-    ESP_LOGI(TAG, "ENS210 initialized");
+    ESP_LOGI(TAG, "ENS210 %s", ens210_is_present() ? "present" : "not present");
     
     // Initialize ENS16X air quality sensor
     ens16x_init();

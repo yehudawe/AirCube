@@ -64,11 +64,19 @@ void vcnl4040_init(void)
 {
     vcnl4040_present = false;
 
-    // Probe presence via the device ID register.
+    // Quietly check for an ACK at the VCNL4040 address first. On Base hardware
+    // the sensor is absent by design, so a no-ACK is a normal "not present"
+    // result rather than a fault (avoids noisy I2C error logs during detection).
+    if (!i2c_driver_probe(VCNL4040_I2C_ADDRESS)) {
+        ESP_LOGI(TAG, "VCNL4040 not present");
+        return;
+    }
+
+    // Confirm identity via the device ID register.
     uint16_t id = 0;
     esp_err_t ret = vcnl4040_read_reg(VCNL4040_REG_DEVICE_ID, &id);
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "VCNL4040 not detected (ID read: %s)", esp_err_to_name(ret));
+        ESP_LOGW(TAG, "VCNL4040 ID read failed: %s", esp_err_to_name(ret));
         return;
     }
     if (id != VCNL4040_DEVICE_ID) {

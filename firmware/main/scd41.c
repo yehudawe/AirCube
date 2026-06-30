@@ -167,6 +167,15 @@ void scd41_init(void)
     scd41_present = false;
     scd41_data_valid = false;
 
+    // Quietly check whether anything is on the bus at the SCD41 address first.
+    // On Base hardware the sensor is absent by design, so treat a no-ACK as a
+    // normal "not present" result instead of letting the probe transactions
+    // emit alarming I2C error logs.
+    if (!i2c_driver_probe(SCD41_I2C_ADDRESS)) {
+        ESP_LOGI(TAG, "SCD41 not present");
+        return;
+    }
+
     // The sensor only responds 500 ms after stop_periodic_measurement, and the
     // command itself is only valid from idle/periodic state. Send it first to
     // guarantee a known idle state, then wait the required settling time.
