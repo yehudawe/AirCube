@@ -60,7 +60,8 @@ void serial_protocol_init(void)
 
 void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float humidity,
                              const char* ens16x_status_str, int etvoc, int eco2,
-                             int aqi, int aqi_s, int aqi_uba)
+                             int aqi, int aqi_s, int aqi_uba,
+                             const char* model, int co2_ppm, float lux)
 {
     char json_buffer[JSON_OUTPUT_BUF_SIZE];
     
@@ -74,12 +75,18 @@ void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float h
     // (TVOC-derived, 0-500) starting in firmware 1.5.0. The previous AQI-S
     // value moved to "aqi_s" - this is a breaking change for any consumer
     // that was reading "aqi" as AQI-S in older firmware.
+    // On Pro hardware temperature/humidity come from the SCD41 (the "ens210"
+    // keys are kept for backward compatibility), and "scd41"/"vcnl4040" carry
+    // the Pro-only true CO2 and ambient light. On Base co2/lux are 0.
     int len = snprintf(json_buffer, sizeof(json_buffer),
-        "{\"ens210\":{\"status\":%u,\"temperature_c\":%.2f,\"temperature_f\":%.2f,\"humidity\":%.2f},"
+        "{\"model\":\"%s\","
+        "\"ens210\":{\"status\":%u,\"temperature_c\":%.2f,\"temperature_f\":%.2f,\"humidity\":%.2f},"
         "\"ens16x\":{\"status\":\"%s\",\"etvoc\":%d,\"eco2\":%d,\"aqi\":%d,\"aqi_s\":%d,\"aqi_uba\":%d},"
+        "\"scd41\":{\"co2\":%d},\"vcnl4040\":{\"lux\":%.1f},"
         "\"timestamp\":%lu}\n",
-        ens210_status, temperature_c, temperature_f, humidity,
+        model, ens210_status, temperature_c, temperature_f, humidity,
         ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba,
+        co2_ppm, lux,
         (unsigned long)timestamp);
     
     if (len > 0 && len < sizeof(json_buffer)) {

@@ -12,16 +12,20 @@
  *   - Humidity Meas (0x0405)     : Actual humidity in 0.01 %
  *   - Custom (0xFC01)            : eCO2, eTVOC, VOC Level (TVOC-derived)
  *   - Analog Output (0x000D)     : LED brightness (0-100)
+ *   - CO2 Meas (0x040D)          : Pro only - true CO2 from SCD41
+ *   - Illuminance Meas (0x0400)  : Pro only - ambient light from VCNL4040
  *
  * @author StuckAtPrototype, LLC
  */
 
 #include "zigbee.h"
 #include "led.h"
+#include "device_model.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
+#include <math.h>
 
 #include "esp_check.h"
 #include "esp_app_desc.h"
@@ -98,6 +102,19 @@ static int16_t temp_to_zb(float temp_c)
 static uint16_t humidity_to_zb(float rh)
 {
     return (uint16_t)(rh * 100.0f);
+}
+
+/** Convert lux to the ZCL Illuminance MeasuredValue: 10000*log10(lux)+1.
+ *  0 lux -> 0 (per spec, "too low to be measured"). Clamped to 0xFFFE. */
+static uint16_t lux_to_zb(float lux)
+{
+    if (lux <= 0.0f) {
+        return 0;
+    }
+    float v = 10000.0f * log10f(lux) + 1.0f;
+    if (v < 1.0f)        v = 1.0f;
+    if (v > 65534.0f)    v = 65534.0f;
+    return (uint16_t)v;
 }
 
 /** Zigbee ZCL char string (length-prefixed) from ESP-IDF app image version. */
@@ -468,6 +485,33 @@ static esp_zb_cluster_list_t *create_cluster_list(void)
     ESP_ERROR_CHECK(esp_zb_cluster_list_add_analog_output_cluster(cluster_list,
         ao_cluster, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
 
+    /* ---- Pro-only standard clusters: true CO2 + ambient light ---- */
+    if (aircube_model_is_pro()) {
+        /* Carbon Dioxide Measurement (0x040D). MeasuredValue is a float
+           expressed as a fraction of one (e.g. 400 ppm -> 0.0004). */
+        esp_zb_carbon_dioxide_measurement_cluster_cfg_t co2_cfg = {
+            .measured_value     = 0.0f,
+            .min_measured_value = 0.0f,
+            .max_measured_value = 0.01f,   /* 10000 ppm */
+        };
+        ESP_ERROR_CHECK(esp_zb_cluster_list_add_carbon_dioxide_measurement_cluster(
+            cluster_list,
+            esp_zb_carbon_dioxide_measurement_cluster_create(&co2_cfg),
+            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+
+        /* Illuminance Measurement (0x0400). MeasuredValue is
+           10000*log10(lux)+1 as a uint16. */
+        esp_zb_illuminance_meas_cluster_cfg_t illum_cfg = {
+            .measured_value = 0,
+            .min_value      = 1,
+            .max_value      = 0xFFFE,
+        };
+        ESP_ERROR_CHECK(esp_zb_cluster_list_add_illuminance_meas_cluster(
+            cluster_list,
+            esp_zb_illuminance_meas_cluster_create(&illum_cfg),
+            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE));
+    }
+
     return cluster_list;
 }
 
@@ -578,6 +622,43 @@ static void configure_reporting(void)
     memcpy(&brightness_rpt.u.send_info.delta, &brightness_delta, sizeof(float));
     esp_zb_zcl_update_reporting_info(&brightness_rpt);
 
+    /* Pro-only: CO2 (0x040D) and Illuminance (0x0400) reporting. */
+    if (aircube_model_is_pro()) {
+        /* CO2: float MeasuredValue, report on ~50 ppm (5e-5 fraction) change */
+        esp_zb_zcl_reporting_info_t co2_rpt = {
+            .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+            .ep                 = AIRCUBE_ENDPOINT,
+            .cluster_id         = ESP_ZB_ZCL_CLUSTER_ID_CARBON_DIOXIDE_MEASUREMENT,
+            .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+            .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
+            .u.send_info.min_interval     = 1,
+            .u.send_info.max_interval     = 60,
+            .u.send_info.def_min_interval = 1,
+            .u.send_info.def_max_interval = 60,
+            .attr_id            = ESP_ZB_ZCL_ATTR_CARBON_DIOXIDE_MEASUREMENT_MEASURED_VALUE_ID,
+            .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
+        };
+        float co2_delta = 50.0f / 1000000.0f;
+        memcpy(&co2_rpt.u.send_info.delta, &co2_delta, sizeof(float));
+        esp_zb_zcl_update_reporting_info(&co2_rpt);
+
+        /* Illuminance: uint16 MeasuredValue, report on a small log-scale change */
+        esp_zb_zcl_reporting_info_t illum_rpt = {
+            .direction          = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+            .ep                 = AIRCUBE_ENDPOINT,
+            .cluster_id         = ESP_ZB_ZCL_CLUSTER_ID_ILLUMINANCE_MEASUREMENT,
+            .cluster_role       = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+            .dst.profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
+            .u.send_info.min_interval     = 1,
+            .u.send_info.max_interval     = 60,
+            .u.send_info.def_min_interval = 1,
+            .u.send_info.def_max_interval = 60,
+            .u.send_info.delta.u16        = 100,
+            .attr_id            = ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_MEASURED_VALUE_ID,
+            .manuf_code         = ESP_ZB_ZCL_ATTR_NON_MANUFACTURER_SPECIFIC,
+        };
+        esp_zb_zcl_update_reporting_info(&illum_rpt);
+    }
 }
 
 static void apply_zigbee_tx_power(void)
@@ -685,7 +766,7 @@ void zigbee_init(void)
 }
 
 void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
-                           int aqi)
+                           int aqi, float co2_ppm, float lux)
 {
     if (!s_connected) {
         return;     /* Don't update attributes until we've joined a network */
@@ -732,6 +813,20 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
         ESP_ZB_ZCL_CLUSTER_ID_ANALOG_OUTPUT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID, &zb_brightness, false);
 
+    /* Pro-only: true CO2 (0x040D) and ambient light (0x0400) */
+    if (aircube_model_is_pro()) {
+        float    zb_co2   = co2_ppm / 1000000.0f;   /* ppm -> fraction of one */
+        uint16_t zb_illum = lux_to_zb(lux);
+
+        esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+            ESP_ZB_ZCL_CLUSTER_ID_CARBON_DIOXIDE_MEASUREMENT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+            ESP_ZB_ZCL_ATTR_CARBON_DIOXIDE_MEASUREMENT_MEASURED_VALUE_ID, &zb_co2, false);
+
+        esp_zb_zcl_set_attribute_val(AIRCUBE_ENDPOINT,
+            ESP_ZB_ZCL_CLUSTER_ID_ILLUMINANCE_MEASUREMENT, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+            ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_MEASURED_VALUE_ID, &zb_illum, false);
+    }
+
     /* One-shot attribute reports to ensure coordinator updates */
     report_attr(ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
                 ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID);
@@ -740,6 +835,13 @@ void zigbee_update_sensors(float temp_c, float humidity, int eco2, int etvoc,
     report_attr(CUSTOM_CLUSTER_ID, ATTR_ECO2_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_ETVOC_ID);
     report_attr(CUSTOM_CLUSTER_ID, ATTR_AQI_ID);
+
+    if (aircube_model_is_pro()) {
+        report_attr(ESP_ZB_ZCL_CLUSTER_ID_CARBON_DIOXIDE_MEASUREMENT,
+                    ESP_ZB_ZCL_ATTR_CARBON_DIOXIDE_MEASUREMENT_MEASURED_VALUE_ID);
+        report_attr(ESP_ZB_ZCL_CLUSTER_ID_ILLUMINANCE_MEASUREMENT,
+                    ESP_ZB_ZCL_ATTR_ILLUMINANCE_MEASUREMENT_MEASURED_VALUE_ID);
+    }
 
     esp_zb_lock_release();
 }

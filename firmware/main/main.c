@@ -12,6 +12,7 @@
 #include "ens16x_driver.h"
 #include "scd41.h"
 #include "vcnl4040.h"
+#include "device_model.h"
 #include "i2c_driver.h"
 #include "serial_protocol.h"
 #include "button.h"
@@ -239,6 +240,25 @@ static void startup_animation(void) {
     led_set_color(final_color);
 }
 
+/**
+ * @brief Build ENS16X temperature/humidity compensation bytes from floats.
+ *
+ * The ENS16X TEMP_IN/RH_IN registers (written by ens16x_write_ens210_data())
+ * use the same encoding as the ENS210 raw output: temperature in 1/64 K and
+ * relative humidity in 1/512 %, each a little-endian uint16. On Pro hardware
+ * the ENS210 is absent, so we synthesize these bytes from the SCD41 readings.
+ */
+static void compose_ens16x_compensation(float temp_c, float humidity,
+                                        uint8_t t[2], uint8_t h[2])
+{
+    uint16_t t_raw = (uint16_t)((temp_c + 273.15f) * 64.0f);
+    uint16_t h_raw = (uint16_t)(humidity * 512.0f);
+    t[0] = (uint8_t)(t_raw & 0xFF);
+    t[1] = (uint8_t)(t_raw >> 8);
+    h[0] = (uint8_t)(h_raw & 0xFF);
+    h[1] = (uint8_t)(h_raw >> 8);
+}
+
 // Command processing task
 void command_task(void *pvParameters)
 {
@@ -260,24 +280,68 @@ void sensor_task(void *pvParameters)
 
     esp_task_wdt_add(NULL);
 
+    bool is_pro = aircube_model_is_pro();
+
     while (1) {
         esp_task_wdt_reset();
 
-        // Read ENS210 temperature and humidity
-        ens210_read_envir();
-        float temp_c = ens210_get_temperature(1); // 1 = Celsius
-        float humidity = ens210_get_humidity();
-        uint8_t ens210_status = ens210_get_status();
+        // Temperature/RH source depends on the hardware model:
+        //   Base -> ENS210, Pro -> SCD41 (ENS210 absent).
+        // Both feed the ENS16X TEMP_IN/RH_IN registers for VOC compensation.
+        float temp_c = 0.0f;
+        float humidity = 0.0f;
+        uint8_t ens210_status = 0;   // kept for serial JSON compatibility
+        uint16_t co2_ppm = 0;        // true CO2 (Pro/SCD41 only)
+        float lux = 0.0f;            // ambient light (Pro/VCNL4040 only)
+        uint8_t comp_t[2];
+        uint8_t comp_h[2];
 
-        // we know that the temperature has a 2 degree offset from the real temperature
-        // subtract 2 degrees from the temperature to get the real temperature
-        temp_c -= 2;
-        
-        // Write ENS210 data to ENS161 for environmental compensation
-        uint8_t ens210_t[2];
-        uint8_t ens210_h[2];
-        ens210_get_envir(ens210_t, ens210_h);
-        ens16x_write_ens210_data(ens210_t, ens210_h);
+        // ENS210 comparison readout (Pro hardware that still has an ENS210 fitted).
+        bool ens210_compare = false;
+        float ens210_temp_c = 0.0f;
+        float ens210_humidity = 0.0f;
+
+        if (is_pro) {
+            // Pro: SCD41 provides temp/RH/CO2; VCNL4040 provides ambient light.
+            scd41_poll();   // drives single-shot cadence; refreshes cached values
+            temp_c   = scd41_get_temperature_c();
+            humidity = scd41_get_humidity();
+            co2_ppm  = scd41_get_co2();
+            ens210_status = 0x01;   // synthetic "OK" so downstream logic is unchanged
+
+            vcnl4040_read();
+            lux = vcnl4040_get_lux();
+
+            // If an ENS210 is also fitted, read it too so we can compare its
+            // temperature/humidity against the SCD41 (debug/calibration aid).
+            if (ens210_is_present()) {
+                ens210_read_envir();
+                ens210_temp_c = ens210_get_temperature(1) - 2; // same -2 C enclosure offset as Base
+                ens210_humidity = ens210_get_humidity();
+                ens210_compare = true;
+            }
+
+            // Only feed the ENS16X real compensation once the SCD41 has produced
+            // a valid measurement. During the first ~5 s warm-up its values are
+            // still 0, which would push bad temp/RH into the VOC compensation.
+            if (scd41_has_data()) {
+                compose_ens16x_compensation(temp_c, humidity, comp_t, comp_h);
+                ens16x_write_ens210_data(comp_t, comp_h);
+            }
+        } else {
+            // Base: ENS210 temperature and humidity.
+            ens210_read_envir();
+            temp_c = ens210_get_temperature(1); // 1 = Celsius
+            humidity = ens210_get_humidity();
+            ens210_status = ens210_get_status();
+
+            // ENS210 reads ~2 C high in this enclosure; correct it.
+            temp_c -= 2;
+
+            // Write ENS210 data to ENS161 for environmental compensation
+            ens210_get_envir(comp_t, comp_h);
+            ens16x_write_ens210_data(comp_t, comp_h);
+        }
         
         // Refresh ENS16X device status (needed to detect warm-up completion)
         ens16x_get_device_status();
@@ -313,36 +377,36 @@ void sensor_task(void *pvParameters)
         }
         
         // Display all sensor data with status
-        ESP_LOGI(TAG, "=== Sensor Data ===");
-        ESP_LOGI(TAG, "ENS210 - Status: 0x%02X, Temperature: %.2f°C, Humidity: %.2f%%", 
-                 ens210_status, temp_c, humidity);
+        ESP_LOGI(TAG, "=== Sensor Data (%s) ===", aircube_model_name());
+        ESP_LOGI(TAG, "%s - Temperature: %.2f°C / %.2f°F, Humidity: %.2f%%",
+                 is_pro ? "SCD41 " : "ENS210", temp_c, temp_c * 1.8f + 32.0f, humidity);
         ESP_LOGI(TAG, "ENS16X - Status: %s, eTVOC: %d ppb, eCO2: %d ppm, VOC Level: %d, AQI-S: %d, AQI-UBA: %d",
                  ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba);
-
-        // === Pro-model sensors (debug output only, Phase 1) ===
-        if (scd41_is_present()) {
-            if (scd41_read()) {
-                ESP_LOGI(TAG, "SCD41  - CO2: %u ppm, Temperature: %.2f°C, Humidity: %.2f%%",
-                         scd41_get_co2(), scd41_get_temperature_c(), scd41_get_humidity());
-            } else {
-                ESP_LOGD(TAG, "SCD41  - no new sample ready");
+        if (is_pro) {
+            ESP_LOGI(TAG, "SCD41  - CO2: %u ppm", co2_ppm);
+            ESP_LOGI(TAG, "VCNL4040 - Ambient: %.1f lux", lux);
+            if (ens210_compare) {
+                float dT_c = ens210_temp_c - temp_c;
+                ESP_LOGI(TAG, "ENS210 - Temperature: %.2f°C / %.2f°F, Humidity: %.2f%% (compare: dT=%+.2f°C / %+.2f°F, dRH=%+.2f%%)",
+                         ens210_temp_c, ens210_temp_c * 1.8f + 32.0f, ens210_humidity,
+                         dT_c, dT_c * 1.8f, ens210_humidity - humidity);
             }
         }
-        if (vcnl4040_is_present()) {
-            vcnl4040_read();
-            ESP_LOGI(TAG, "VCNL4040 - Proximity: %u, Ambient: %u (%.1f lux)",
-                     vcnl4040_get_proximity(), vcnl4040_get_ambient_raw(), vcnl4040_get_lux());
-        }
-        
+
+        // On Pro the SCD41 provides true NDIR CO2; log/store/report that instead
+        // of the ENS16X eCO2 estimate. eTVOC and VOC Level still come from ENS16X.
+        int co2_for_history = is_pro ? (int)co2_ppm : eco2;
+
         // Send sensor data as JSON over serial
         serial_send_sensor_data(ens210_status, temp_c, humidity,
-                               ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba);
+                               ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba,
+                               aircube_model_name(), (int)co2_ppm, lux);
         
         // Record sample into history accumulator and check for 10-min flush.
         // History stores the new canonical VOC Level (TVOC-derived); flushed entries
         // from before this change still hold the old AQI-S value in the same
         // columns - the on-flash byte layout did not change.
-        history_record_sample(temp_c, humidity, aqi, eco2, etvoc);
+        history_record_sample(temp_c, humidity, aqi, co2_for_history, etvoc);
         history_check_flush();
         
         // Push sensor data to Zigbee every 10 seconds
@@ -350,7 +414,7 @@ void sensor_task(void *pvParameters)
         TickType_t now = xTaskGetTickCount();
         if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
             last_zb_update = now;
-            zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi);
+            zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi, (float)co2_ppm, lux);
             // BLE BTHome disabled (not used in production for now); see app_main().
             // ble_bthome_update(temp_c, humidity, eco2, etvoc);
         }
@@ -444,6 +508,10 @@ void app_main(void)
     ESP_LOGI(TAG, "SCD41 %s", scd41_is_present() ? "present" : "not present");
     vcnl4040_init();
     ESP_LOGI(TAG, "VCNL4040 %s", vcnl4040_is_present() ? "present" : "not present");
+
+    // Decide Base vs Pro from sensor presence (drivers probed above). This
+    // gates temp/RH source selection and Pro-only Zigbee clusters.
+    aircube_model_detect();
     
     // Initialize Zigbee stack (End Device, idles until long-press on first boot)
     zigbee_init();

@@ -16,9 +16,13 @@ void serial_protocol_init(void);
 //   aqi   - canonical AirCube VOC Level (TVOC-derived, 0-500)
 //   aqi_s - legacy ENS161 relative AQI-S (0-500)
 //   aqi_uba - ENS161 UBA hygienic rating (1-5)
+//   model - "base" or "pro" (detected hardware variant)
+//   co2_ppm - true CO2 from SCD41 (Pro only; 0 on Base)
+//   lux   - ambient light from VCNL4040 (Pro only; 0 on Base)
 void serial_send_sensor_data(uint8_t ens210_status, float temperature_c, float humidity,
                              const char* ens16x_status_str, int etvoc, int eco2,
-                             int aqi, int aqi_s, int aqi_uba);
+                             int aqi, int aqi_s, int aqi_uba,
+                             const char* model, int co2_ppm, float lux);
 
 // Process incoming commands (call periodically)
 void serial_process_commands(void);
