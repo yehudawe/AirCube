@@ -44,10 +44,11 @@ static const char *TAG = "scd41";
 #define SCD41_TEMPERATURE_OFFSET_C  4.0f
 
 // Software-only temperature trim (deg C), added to the reported temperature
-// after the sensor's own compensation. Humidity is NOT touched. With the 4.0 C
-// on-chip offset the SCD41 read a steady ~1.86 C below a calibrated ENS210
-// reference (averaged over 5 min at thermal steady state), so we add it back here.
-#define SCD41_TEMPERATURE_TRIM_C    1.86f
+// after the sensor's own compensation. Humidity is NOT touched. Trimmed against
+// a calibrated reference thermometer: the SCD41 read 79.8 F while the reference
+// showed 77.4 F (2.4 F = 1.33 C too high), so the previous +1.86 C trim is
+// reduced by that amount to 0.53 C.
+#define SCD41_TEMPERATURE_TRIM_C    0.53f
 
 static bool scd41_present = false;
 static bool scd41_data_valid = false;   // true after first valid T/RH measurement
