@@ -25,6 +25,14 @@ esp_err_t i2c_driver_write(uint8_t device_addr, const uint8_t *data, size_t len)
 // data_len: number of bytes to read
 esp_err_t i2c_driver_read(uint8_t device_addr, const uint8_t *reg_addr, size_t reg_len, uint8_t *data, size_t data_len);
 
+// Read raw bytes from I2C device with no register/command write phase.
+// Used by sensors (e.g. SCD4x) that require a command write, a delay, then a
+// separate read transaction rather than a combined write-read.
+// device_addr: I2C device address
+// data: buffer to store read data
+// len: number of bytes to read
+esp_err_t i2c_driver_read_raw(uint8_t device_addr, uint8_t *data, size_t len);
+
 // Deinitialize I2C bus
 void i2c_driver_deinit(void);
 

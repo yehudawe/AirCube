@@ -10,12 +10,14 @@
 #include "led.h"
 #include "ens210.h"
 #include "ens16x_driver.h"
+#include "scd41.h"
+#include "vcnl4040.h"
 #include "i2c_driver.h"
 #include "serial_protocol.h"
 #include "button.h"
 #include "history.h"
 #include "zigbee.h"
-#include "ble_bthome.h"
+// BLE BTHome disabled (not used in production for now); see app_main() and sdkconfig.defaults.
 
 static const char *TAG = "main";
 
@@ -316,6 +318,21 @@ void sensor_task(void *pvParameters)
                  ens210_status, temp_c, humidity);
         ESP_LOGI(TAG, "ENS16X - Status: %s, eTVOC: %d ppb, eCO2: %d ppm, VOC Level: %d, AQI-S: %d, AQI-UBA: %d",
                  ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba);
+
+        // === Pro-model sensors (debug output only, Phase 1) ===
+        if (scd41_is_present()) {
+            if (scd41_read()) {
+                ESP_LOGI(TAG, "SCD41  - CO2: %u ppm, Temperature: %.2f°C, Humidity: %.2f%%",
+                         scd41_get_co2(), scd41_get_temperature_c(), scd41_get_humidity());
+            } else {
+                ESP_LOGD(TAG, "SCD41  - no new sample ready");
+            }
+        }
+        if (vcnl4040_is_present()) {
+            vcnl4040_read();
+            ESP_LOGI(TAG, "VCNL4040 - Proximity: %u, Ambient: %u (%.1f lux)",
+                     vcnl4040_get_proximity(), vcnl4040_get_ambient_raw(), vcnl4040_get_lux());
+        }
         
         // Send sensor data as JSON over serial
         serial_send_sensor_data(ens210_status, temp_c, humidity,
@@ -328,13 +345,14 @@ void sensor_task(void *pvParameters)
         history_record_sample(temp_c, humidity, aqi, eco2, etvoc);
         history_check_flush();
         
-        // Push sensor data to Zigbee and BLE every 10 seconds
+        // Push sensor data to Zigbee every 10 seconds
         static TickType_t last_zb_update = 0;
         TickType_t now = xTaskGetTickCount();
         if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
             last_zb_update = now;
             zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi);
-            ble_bthome_update(temp_c, humidity, eco2, etvoc);
+            // BLE BTHome disabled (not used in production for now); see app_main().
+            // ble_bthome_update(temp_c, humidity, eco2, etvoc);
         }
 
         // Wait for configurable period before next reading
@@ -419,12 +437,21 @@ void app_main(void)
     // Initialize ENS16X air quality sensor
     ens16x_init();
     ESP_LOGI(TAG, "ENS16X initialized");
+
+    // Initialize Pro-model sensors. These probe for presence and are no-ops on
+    // Base hardware (which lacks them). Phase 1: debug output only.
+    scd41_init();
+    ESP_LOGI(TAG, "SCD41 %s", scd41_is_present() ? "present" : "not present");
+    vcnl4040_init();
+    ESP_LOGI(TAG, "VCNL4040 %s", vcnl4040_is_present() ? "present" : "not present");
     
     // Initialize Zigbee stack (End Device, idles until long-press on first boot)
     zigbee_init();
 
-    // Initialize BLE BTHome broadcaster (shares radio with Zigbee via coexistence)
-    ble_bthome_init();
+    // BLE BTHome broadcaster disabled: not used in production for now, and the
+    // BLE+Zigbee radio coexistence was causing a PHY-startup hang in zigbee_main.
+    // Re-enable by uncommenting this and the ble_bthome_update() call in sensor_task().
+    // ble_bthome_init();
     
     // Create command processing task
     xTaskCreate(command_task, "command_task", COMMAND_TASK_STACK_SIZE, NULL, 

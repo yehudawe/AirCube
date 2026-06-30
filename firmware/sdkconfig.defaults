@@ -3,6 +3,11 @@
 #
 
 #
+# Target chip
+#
+CONFIG_IDF_TARGET="esp32h2"
+
+#
 # Flash size (AirCube hardware has 2MB flash)
 #
 CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
@@ -27,20 +32,16 @@ CONFIG_ZB_RADIO_NATIVE=y
 CONFIG_AIRCUBE_ZB_TX_POWER_DBM=20
 
 #
-# Bluetooth — NimBLE broadcaster for BTHome v2 (firmware/main/ble_bthome.c)
+# Bluetooth disabled — BLE BTHome is not used in production for now.
+# Keeping the BT controller and software coexistence enabled made the
+# 802.15.4 (Zigbee) radio arbitrate with an idle BT coex layer, hanging
+# zigbee_main in the PHY frequency-set (wait_freq_set_busy). With BT off,
+# Zigbee has exclusive radio access. Re-enable these (and ble_bthome.c in
+# CMakeLists + the calls in main.c) to bring BLE back.
 #
-CONFIG_BT_ENABLED=y
-CONFIG_BT_NIMBLE_ENABLED=y
-# Non-connectable broadcast only; disable unused roles to save flash/RAM
-# CONFIG_BT_NIMBLE_ROLE_CENTRAL is not set
-# CONFIG_BT_NIMBLE_ROLE_OBSERVER is not set
-# CONFIG_BT_NIMBLE_ROLE_PERIPHERAL is not set
-CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
-# Disable extended advertising controller; legacy advertising is used instead
-CONFIG_BT_NIMBLE_MAX_EXT_ADV_INSTANCES=0
+# CONFIG_BT_ENABLED is not set
 
 #
-# Radio coexistence — Zigbee (802.15.4) + BLE share the 2.4 GHz radio.
-# Without this the two stacks will conflict.
+# Radio coexistence disabled (only needed when BLE + Zigbee run together).
 #
-CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+# CONFIG_ESP_COEX_SW_COEXIST_ENABLE is not set
