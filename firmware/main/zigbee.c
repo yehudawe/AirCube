@@ -20,6 +20,7 @@
 
 #include "zigbee.h"
 #include "led.h"
+#include "button.h"
 #include "device_model.h"
 #include "radio_mode.h"
 
@@ -730,7 +731,8 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
             float raw = *(float *)m->attribute.data.value;
             if (raw < 0.0f)   raw = 0.0f;
             if (raw > 100.0f) raw = 100.0f;
-            led_set_intensity(raw / 100.0f);
+            /* Shared write path: applies, persists to NVS, reports back */
+            button_set_brightness_percent((int)(raw + 0.5f));
             ESP_LOGI(TAG, "Brightness set to %.0f%% via Zigbee", raw);
         }
     }

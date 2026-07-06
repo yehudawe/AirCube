@@ -28,6 +28,7 @@ Base UUID suffix: `-1D0F-4E7C-8E4B-2A3D5F6B7C80`
 | `A17C0DE2` | Live Data | Read, Notify | 20 B |
 | `A17C0DE3` | History Request | Write | 4 B |
 | `A17C0DE4` | History Data | Notify | ≤ MTU−3 |
+| `A17C0DE5` | Brightness | Read, Write, Notify | 1 B |
 
 Firmware prefers ATT MTU 256 (iOS typically negotiates 185).
 
@@ -62,6 +63,16 @@ Notified once per sensor readout (~1 s). 20 bytes:
 | 14 | u8 | AQI-UBA (1–5) |
 | 15 | u8 | flags: bit0 = Pro model |
 | 16 | u32 | uptime, ms |
+
+## Brightness (`A17C0DE5`, read + write + notify)
+
+Single byte: LED brightness percent, 0–100 (writes above 100 are clamped).
+Writes apply immediately and persist to NVS across reboots. The device
+notifies the confirmed value after any brightness change — including local
+ones (button press) and Zigbee writes — so subscribed clients stay in sync.
+
+The hardware button cycles 0 → 10 → 30 → 60 → 100 → 0, snapping to the next
+level above the current (possibly BLE-written) percent.
 
 ## History sync (streaming, not paged)
 

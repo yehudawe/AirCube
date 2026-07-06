@@ -56,6 +56,15 @@ void ble_gatt_update_live(float temp_c, float humidity, int aqi, int eco2,
 /** @return true if a BLE central is currently connected */
 bool ble_gatt_is_connected(void);
 
+/**
+ * @brief Notify a subscribed BLE central that LED brightness changed.
+ *
+ * Call after a local brightness change (button press, Zigbee write) so a
+ * connected app stays in sync. No-op when not initialized, not connected,
+ * or the client has not subscribed to the Brightness characteristic.
+ */
+void ble_gatt_report_brightness(void);
+
 #ifdef __cplusplus
 }
 #endif

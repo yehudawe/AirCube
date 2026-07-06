@@ -10,6 +10,7 @@
  *     Live Data        A17C0DE2  (read/notify)   20 bytes
  *     History Request  A17C0DE3  (write)          4 bytes
  *     History Data     A17C0DE4  (notify)        4 + n*32 bytes
+ *     Brightness       A17C0DE5  (read/write/notify)  1 byte (percent 0-100)
  *
  * Advertising keeps the BTHome v2 service-data payload from ble_bthome.c
  * (Home Assistant proxies keep decoding live values) but is *connectable*;
@@ -22,12 +23,14 @@
 #include "ble_gatt.h"
 #include "history.h"
 #include "device_model.h"
+#include "button.h"
 
 #include <string.h>
 #include <stdio.h>
 
 #include "esp_log.h"
 #include "esp_app_desc.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -56,6 +59,7 @@ static const ble_uuid128_t UUID_DEV_INFO  = AIRCUBE_UUID128(0xE1);
 static const ble_uuid128_t UUID_LIVE      = AIRCUBE_UUID128(0xE2);
 static const ble_uuid128_t UUID_HIST_REQ  = AIRCUBE_UUID128(0xE3);
 static const ble_uuid128_t UUID_HIST_DATA = AIRCUBE_UUID128(0xE4);
+static const ble_uuid128_t UUID_BRIGHT    = AIRCUBE_UUID128(0xE5);
 
 /* ── Protocol constants ──────────────────────────────────────────────── */
 #define PROTOCOL_VERSION      1
@@ -118,6 +122,8 @@ static volatile bool     s_stream_abort    = false;
 
 static uint16_t s_live_val_handle;
 static uint16_t s_hist_data_val_handle;
+static uint16_t s_bright_val_handle;
+static volatile bool s_bright_notify = false;
 
 static live_data_t s_live;                 /* latest readings (little-endian native) */
 
@@ -129,6 +135,9 @@ static volatile uint16_t s_adv_tvoc     = 0;
 
 /* History stream request queue (length 1: one stream at a time) */
 static QueueHandle_t s_stream_queue = NULL;
+
+/* One-shot timer: Service Changed indication after connect (see below) */
+static esp_timer_handle_t s_svc_changed_timer = NULL;
 
 /* ── Firmware version ────────────────────────────────────────────────── */
 
@@ -151,6 +160,20 @@ static void get_fw_version(uint8_t *major, uint8_t *minor, uint8_t *patch)
 #define BTHOME_OBJ_TVOC         0x13
 
 static int gap_event_cb(struct ble_gap_event *event, void *arg);
+
+/* iOS caches a peripheral's GATT database across connections, so when a
+ * firmware update adds characteristics an iPhone keeps using the stale
+ * table (the client never "sees" new characteristics until Bluetooth is
+ * toggled). We are not bonded, so we can't track per-client state; instead
+ * indicate Service Changed shortly after every connect - the delay gives
+ * the central time to subscribe to the Service Changed characteristic.
+ * Cost: the phone re-discovers our handful of characteristics (~100 ms). */
+static void svc_changed_timer_cb(void *arg)
+{
+    if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        ble_svc_gatt_changed(0x0001, 0xFFFF);
+    }
+}
 
 /** Set advertisement + scan-response data and start connectable advertising. */
 static void do_advertise(void)
@@ -248,6 +271,10 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "Central connected (handle %u)", s_conn_handle);
+            if (s_svc_changed_timer != NULL) {
+                esp_timer_stop(s_svc_changed_timer);
+                esp_timer_start_once(s_svc_changed_timer, 1500 * 1000);
+            }
         } else {
             ESP_LOGW(TAG, "Connection failed (status %d)", event->connect.status);
             do_advertise();
@@ -256,10 +283,11 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "Central disconnected (reason %d)", event->disconnect.reason);
-        s_conn_handle  = BLE_HS_CONN_HANDLE_NONE;
-        s_live_notify  = false;
-        s_hist_notify  = false;
-        s_stream_abort = true;      /* stop any running history stream */
+        s_conn_handle   = BLE_HS_CONN_HANDLE_NONE;
+        s_live_notify   = false;
+        s_hist_notify   = false;
+        s_bright_notify = false;
+        s_stream_abort  = true;     /* stop any running history stream */
         do_advertise();
         break;
 
@@ -271,6 +299,8 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
             if (!s_hist_notify) {
                 s_stream_abort = true;
             }
+        } else if (event->subscribe.attr_handle == s_bright_val_handle) {
+            s_bright_notify = event->subscribe.cur_notify;
         }
         break;
 
@@ -512,6 +542,32 @@ static int hist_data_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     return 0;
 }
 
+static int brightness_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        uint8_t pct = (uint8_t)button_get_brightness_percent();
+        return os_mbuf_append(ctxt->om, &pct, 1) == 0
+                   ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+
+    if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+        uint8_t pct;
+        uint16_t len = 0;
+        if (ble_hs_mbuf_to_flat(ctxt->om, &pct, 1, &len) != 0 || len < 1) {
+            return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
+        if (pct > 100) {
+            pct = 100;
+        }
+        button_set_brightness_percent(pct);
+        ESP_LOGI(TAG, "Brightness set to %u%% via BLE", pct);
+        return 0;
+    }
+
+    return BLE_ATT_ERR_UNLIKELY;
+}
+
 /* ── GATT service table ──────────────────────────────────────────────── */
 
 static const struct ble_gatt_svc_def gatt_svcs[] = {
@@ -540,6 +596,13 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .access_cb  = hist_data_access_cb,
                 .flags      = BLE_GATT_CHR_F_NOTIFY,
                 .val_handle = &s_hist_data_val_handle,
+            },
+            {
+                .uuid       = &UUID_BRIGHT.u,
+                .access_cb  = brightness_access_cb,
+                .flags      = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
+                              BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &s_bright_val_handle,
             },
             { 0 }   /* terminator */
         },
@@ -598,6 +661,12 @@ void ble_gatt_init(void)
     s_stream_queue = xQueueCreate(1, sizeof(uint16_t));
     xTaskCreate(history_stream_task, "ble_hist_stream", 4096, NULL, 4, NULL);
 
+    const esp_timer_create_args_t timer_args = {
+        .callback = svc_changed_timer_cb,
+        .name = "ble_svc_chg",
+    };
+    esp_timer_create(&timer_args, &s_svc_changed_timer);
+
     nimble_port_freertos_init(ble_host_task);
 
     s_initialized = true;
@@ -655,4 +724,17 @@ void ble_gatt_update_live(float temp_c, float humidity, int aqi, int eco2,
 bool ble_gatt_is_connected(void)
 {
     return s_conn_handle != BLE_HS_CONN_HANDLE_NONE;
+}
+
+void ble_gatt_report_brightness(void)
+{
+    if (!s_initialized || !s_bright_notify ||
+        s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return;
+    }
+    uint8_t pct = (uint8_t)button_get_brightness_percent();
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(&pct, 1);
+    if (om != NULL) {
+        ble_gatts_notify_custom(s_conn_handle, s_bright_val_handle, om);
+    }
 }
