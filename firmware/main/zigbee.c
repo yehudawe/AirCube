@@ -21,6 +21,7 @@
 #include "zigbee.h"
 #include "led.h"
 #include "device_model.h"
+#include "radio_mode.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -292,7 +293,11 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                     ESP_LOGI(TAG, "Pairing requested – start network steering");
                     esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
                 } else {
-                    ESP_LOGI(TAG, "Factory-new device – idle until long-press pairing");
+                    /* BLE-first: a factory-new device with no pairing request
+                     * has nothing to do in Zigbee mode (stale flags, e.g. the
+                     * zb_storage partition was erased externally). Go BLE. */
+                    ESP_LOGI(TAG, "Factory-new, no pairing requested – reverting to BLE mode");
+                    radio_mode_revert_to_ble();
                 }
             } else {
                 ESP_LOGI(TAG, "Device rebooted – already commissioned");
@@ -300,6 +305,10 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                 s_rejoining         = false;
                 s_last_join_tick    = xTaskGetTickCount();
                 s_rejoin_backoff_ms = REJOIN_BACKOFF_INIT_MS;
+                /* Normalize mode flags: commissioned = Zigbee mode next boot
+                 * too, and any leftover pairing request is satisfied. */
+                consume_pairing_flag();
+                radio_mode_set_joined(true);
                 esp_zb_scheduler_alarm((esp_zb_callback_t)report_startup_brightness_cb,
                                        0, STARTUP_REPORT_DELAY_MS);
             }
@@ -332,6 +341,9 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             s_pairing       = false;
             s_rejoining     = false;
             s_last_join_tick = xTaskGetTickCount();
+            /* Persist the joined flag so the next boot picks Zigbee mode
+             * (BLE-first: without this flag the device boots into BLE). */
+            radio_mode_set_joined(true);
             /* Note: we deliberately don't reset s_rejoin_backoff_ms here.
              * schedule_rejoin() will reset it only after we've been
              * connected long enough to count as a stable uptime. */
@@ -352,6 +364,12 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                 ESP_LOGW(TAG, "Network steering stopped – %s",
                          s_pairing ? "timed out" : "no pairing requested");
                 s_pairing = false;
+                /* BLE-first: a pairing attempt that never joined leaves the
+                 * device factory-new. Go back to BLE mode instead of
+                 * lingering in an idle Zigbee mode. */
+                if (esp_zb_bdb_is_factory_new()) {
+                    radio_mode_revert_to_ble();
+                }
             }
         }
         break;
@@ -362,8 +380,20 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
         uint8_t leave_type = leave_params ? leave_params->leave_type : 0xFF;
         ESP_LOGW(TAG, "Left network (leave_type: 0x%x)", leave_type);
         s_connected = false;
-        if (!s_pairing) {
+        if (s_pairing) {
+            /* Local factory reset for re-pairing (zigbee_start_pairing set
+             * the pairing flag; the stack reboots us back into Zigbee mode). */
+            break;
+        }
+        if (leave_type == ESP_ZB_NWK_LEAVE_TYPE_REJOIN) {
+            /* Coordinator asked us to leave-and-rejoin: stay in Zigbee. */
             schedule_rejoin();
+        } else {
+            /* Removed from the network (hub deleted the device or remote
+             * factory reset). BLE-first: clear the joined flag and reboot
+             * into BLE mode. */
+            ESP_LOGW(TAG, "Removed from network - reverting to BLE mode");
+            radio_mode_revert_to_ble();
         }
         break;
     }

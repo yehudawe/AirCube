@@ -146,9 +146,11 @@ void serial_send_history_info(void)
     history_get_info(&write_index, &entry_count);
 
     char response[128];
+    // Note: %llu is unsupported by the default picolibc printf (snprintf
+    // fails and the response is silently dropped); window_us fits in u32.
     int len = snprintf(response, sizeof(response),
-        "{\"history_info\":{\"entries\":%u,\"capacity\":%u,\"slot_bytes\":%u,\"window_us\":%llu}}\n",
-        entry_count, HISTORY_MAX_VALID_ENTRIES, HISTORY_SLOT_SIZE, (unsigned long long)HISTORY_WINDOW_US);
+        "{\"history_info\":{\"entries\":%u,\"capacity\":%u,\"slot_bytes\":%u,\"window_us\":%lu}}\n",
+        entry_count, HISTORY_MAX_VALID_ENTRIES, HISTORY_SLOT_SIZE, (unsigned long)HISTORY_WINDOW_US);
 
     if (len > 0 && len < (int)sizeof(response)) {
         printf("%s", response);
@@ -158,12 +160,20 @@ void serial_send_history_info(void)
 
 void serial_send_history_page(uint16_t start, uint16_t count)
 {
+    // One bulk history transfer at a time device-wide (shared with the BLE
+    // streaming handler). Client retries after a short delay on "busy".
+    if (!history_stream_acquire()) {
+        send_error("busy");
+        return;
+    }
+
     uint16_t write_index, entry_count;
     history_get_info(&write_index, &entry_count);
 
     // Clamp request to valid range
     if (start >= entry_count) {
         send_error("start index out of range");
+        history_stream_release();
         return;
     }
     if (count > HISTORY_MAX_PAGE_SIZE) {
@@ -177,6 +187,7 @@ void serial_send_history_page(uint16_t start, uint16_t count)
     char *buf = malloc(HISTORY_PAGE_BUF_SIZE);
     if (buf == NULL) {
         send_error("out of memory");
+        history_stream_release();
         return;
     }
 
@@ -205,6 +216,7 @@ void serial_send_history_page(uint16_t start, uint16_t count)
     if (!SAFE_APPEND("{\"history\":[")) {
         send_error("buffer overflow");
         free(buf);
+        history_stream_release();
         return;
     }
 
@@ -263,6 +275,7 @@ void serial_send_history_page(uint16_t start, uint16_t count)
         ESP_LOGW(TAG, "history footer truncated (pos=%u)", (unsigned)pos);
         send_error("buffer overflow");
         free(buf);
+        history_stream_release();
         return;
     }
 
@@ -272,6 +285,7 @@ void serial_send_history_page(uint16_t start, uint16_t count)
     fflush(stdout);
 
     free(buf);
+    history_stream_release();
 }
 
 void serial_send_history_clear(void)
@@ -279,6 +293,9 @@ void serial_send_history_clear(void)
     esp_err_t err = history_clear();
     if (err == ESP_OK) {
         send_response("ok", "clear_history", 0);
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        // A history stream is running (serial or BLE) - client retries later
+        send_error("busy");
     } else {
         send_error("failed to clear history");
     }

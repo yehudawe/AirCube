@@ -32,16 +32,24 @@ CONFIG_ZB_RADIO_NATIVE=y
 CONFIG_AIRCUBE_ZB_TX_POWER_DBM=20
 
 #
-# Bluetooth disabled — BLE BTHome is not used in production for now.
-# Keeping the BT controller and software coexistence enabled made the
-# 802.15.4 (Zigbee) radio arbitrate with an idle BT coex layer, hanging
-# zigbee_main in the PHY frequency-set (wait_freq_set_busy). With BT off,
-# Zigbee has exclusive radio access. Re-enable these (and ble_bthome.c in
-# CMakeLists + the calls in main.c) to bring BLE back.
+# Bluetooth (NimBLE peripheral) — BLE-first radio mode.
+# BLE and Zigbee never run simultaneously: radio_mode.c starts exactly one
+# stack per boot (BLE by default, Zigbee when commissioned), so software
+# coexistence stays OFF. The earlier PHY hang (wait_freq_set_busy) only
+# occurred when both the BT coex layer and 802.15.4 were active at once.
 #
-# CONFIG_BT_ENABLED is not set
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+# CONFIG_BT_NIMBLE_ROLE_CENTRAL is not set
+# CONFIG_BT_NIMBLE_ROLE_OBSERVER is not set
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+# 4 + 32*7 = 228-byte history frames fit one notification at MTU 256
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
+# CONFIG_BT_NIMBLE_SECURITY_ENABLE is not set
 
 #
-# Radio coexistence disabled (only needed when BLE + Zigbee run together).
+# Radio coexistence disabled (modes are exclusive by design).
 #
 # CONFIG_ESP_COEX_SW_COEXIST_ENABLE is not set

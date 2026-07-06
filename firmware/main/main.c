@@ -18,7 +18,8 @@
 #include "button.h"
 #include "history.h"
 #include "zigbee.h"
-// BLE BTHome disabled (not used in production for now); see app_main() and sdkconfig.defaults.
+#include "radio_mode.h"
+#include "ble_gatt.h"
 
 static const char *TAG = "main";
 
@@ -409,14 +410,19 @@ void sensor_task(void *pvParameters)
         history_record_sample(temp_c, humidity, aqi, co2_for_history, etvoc);
         history_check_flush();
         
-        // Push sensor data to Zigbee every 10 seconds
-        static TickType_t last_zb_update = 0;
-        TickType_t now = xTaskGetTickCount();
-        if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
-            last_zb_update = now;
-            zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi, (float)co2_ppm, lux);
-            // BLE BTHome disabled (not used in production for now); see app_main().
-            // ble_bthome_update(temp_c, humidity, eco2, etvoc);
+        // Push sensor data to the active radio (modes are exclusive by design)
+        if (radio_mode_is_zigbee_mode()) {
+            // Zigbee: report every 10 seconds
+            static TickType_t last_zb_update = 0;
+            TickType_t now = xTaskGetTickCount();
+            if ((now - last_zb_update) >= pdMS_TO_TICKS(10000)) {
+                last_zb_update = now;
+                zigbee_update_sensors(temp_c, humidity, eco2, etvoc, aqi, (float)co2_ppm, lux);
+            }
+        } else {
+            // BLE: notify a connected client + refresh BTHome advertisement
+            ble_gatt_update_live(temp_c, humidity, aqi, eco2, etvoc,
+                                 co2_ppm, lux, aqi_uba);
         }
 
         // Wait for configurable period before next reading
@@ -513,13 +519,25 @@ void app_main(void)
     // gates temp/RH source selection and Pro-only Zigbee clusters.
     aircube_model_detect();
     
-    // Initialize Zigbee stack (End Device, idles until long-press on first boot)
-    zigbee_init();
-
-    // BLE BTHome broadcaster disabled: not used in production for now, and the
-    // BLE+Zigbee radio coexistence was causing a PHY-startup hang in zigbee_main.
-    // Re-enable by uncommenting this and the ble_bthome_update() call in sensor_task().
-    // ble_bthome_init();
+    // BLE-first radio mode: exactly one radio stack runs per boot (BLE+Zigbee
+    // coexistence hung the PHY on the H2). Default is BLE with a connectable
+    // GATT service; Zigbee only when commissioned or a pairing was requested.
+    // Transitions happen via NVS flags + reboot (see radio_mode.h).
+    radio_mode_init();
+    if (radio_mode_is_zigbee_mode()) {
+        // Zigbee End Device (steers immediately if a pairing was requested)
+        zigbee_init();
+    } else {
+        // Connectable GATT service + BTHome advertising
+        ble_gatt_init();
+        // Mode cue: two quick blue blinks when entering BLE mode
+        for (int i = 0; i < 2; i++) {
+            led_set_color(LED_COLOR_BLUE);
+            vTaskDelay(pdMS_TO_TICKS(120));
+            led_set_color(LED_COLOR_OFF);
+            vTaskDelay(pdMS_TO_TICKS(120));
+        }
+    }
     
     // Create command processing task
     xTaskCreate(command_task, "command_task", COMMAND_TASK_STACK_SIZE, NULL, 
@@ -532,8 +550,21 @@ void app_main(void)
     ESP_LOGI(TAG, "Sensor task created");
 
     // Main loop for LED color based on VOC Level (with pairing override)
+    bool was_zb_connected = zigbee_is_connected();
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(20));  // Update LED every 20ms for smooth transitions
+        
+        // ── Mode cue: three quick green blinks when Zigbee joins ──
+        bool zb_connected = zigbee_is_connected();
+        if (zb_connected && !was_zb_connected) {
+            for (int i = 0; i < 3; i++) {
+                led_set_color(LED_COLOR_GREEN);
+                vTaskDelay(pdMS_TO_TICKS(120));
+                led_set_color(LED_COLOR_OFF);
+                vTaskDelay(pdMS_TO_TICKS(120));
+            }
+        }
+        was_zb_connected = zb_connected;
         
         // ── Pairing mode: flash blue at 2 Hz ──
         if (zigbee_is_pairing()) {

@@ -12,6 +12,7 @@
 #include "button.h"
 #include "led.h"
 #include "zigbee.h"
+#include "radio_mode.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -174,8 +175,10 @@ static void button_task(void *pvParameters)
                     
                     if (long_press) {
                         // ── Long press: start Zigbee pairing ──
+                        // In BLE mode this reboots into Zigbee mode first
+                        // (BLE-first radio mode switching, see radio_mode.h).
                         ESP_LOGI(TAG, "Long press detected – starting Zigbee pairing");
-                        zigbee_start_pairing();
+                        radio_mode_start_pairing();
                         
                         // Wait for button release before accepting new events
                         while (gpio_get_level(io_num) == 1) {
