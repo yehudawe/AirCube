@@ -1,14 +1,19 @@
 """
 AirCube - Air Quality Monitor
 A standalone desktop application for the AirCube sensor device.
+
+Supports both AirCube Base and AirCube Pro. Pro units additionally report
+true NDIR CO2 (SCD41) and ambient light (VCNL4040); those tiles and plots
+light up automatically when a Pro device is detected.
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __app_name__ = "AirCube"
 
 import collections
 import csv
 import json
+import math
 import os
 import re
 import sys
@@ -17,16 +22,16 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QCheckBox, QFileDialog,
-    QGroupBox, QStatusBar, QMessageBox, QSpinBox, QSplitter,
-    QFrame, QGridLayout
+    QStatusBar, QMessageBox, QSpinBox, QFrame, QGridLayout
 )
 from PyQt6.QtCore import QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon, QAction
+from PyQt6.QtGui import QFont
 
 import matplotlib
 matplotlib.use('QtAgg')
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.ticker import MaxNLocator
 
 import serial
 from serial.tools import list_ports
@@ -34,11 +39,62 @@ from serial.tools import list_ports
 # JSON pattern for parsing sensor data
 JSON_PATTERN = re.compile(r"\{.*\}")
 
-# CSV header compatible with other AirCube scripts
+# CSV header: original columns first (compatible with older AirCube scripts),
+# Pro-era columns appended at the end.
 CSV_HEADER = [
     "timestamp", "ens210_status", "temperature_c", "temperature_f",
-    "humidity", "ens16x_status", "etvoc", "eco2", "aqi"
+    "humidity", "ens16x_status", "etvoc", "eco2", "aqi",
+    "aqi_s", "aqi_uba", "model", "co2", "lux",
 ]
+
+# ---------------------------------------------------------------------------
+# Theme
+# ---------------------------------------------------------------------------
+
+class Theme:
+    BG          = "#0d1117"   # window background
+    CARD        = "#161b22"   # tile / panel background
+    CARD_BORDER = "#21262d"
+    TEXT        = "#e6edf3"
+    MUTED       = "#8b949e"
+    ACCENT      = "#2f81f7"
+
+    TEMP   = "#ff6b6b"
+    HUM    = "#4dabf7"
+    VOC    = "#69db7c"
+    ECO2   = "#b197fc"
+    ETVOC  = "#38d9a9"
+    CO2    = "#ffa94d"
+    LUX    = "#ffd43b"
+
+    GOOD   = "#3fb950"
+    WARN   = "#d29922"
+    BAD    = "#f0883e"
+    CRIT   = "#f85149"
+
+    GRID   = "#2d333b"
+
+
+def voc_color(aqi):
+    """Color for the canonical VOC Level (0-500 TVOC-derived bands)."""
+    if aqi <= 50:
+        return Theme.GOOD
+    if aqi <= 100:
+        return Theme.WARN
+    if aqi <= 200:
+        return Theme.BAD
+    return Theme.CRIT
+
+
+def co2_color(ppm):
+    """Color for true CO2 concentration (ppm)."""
+    if ppm < 800:
+        return Theme.GOOD
+    if ppm < 1200:
+        return Theme.WARN
+    if ppm < 2000:
+        return Theme.BAD
+    return Theme.CRIT
 
 
 def parse_json_line(line):
@@ -48,16 +104,27 @@ def parse_json_line(line):
         return None
     try:
         data = json.loads(match.group(0))
+        ens210 = data.get("ens210", {})
+        ens16x = data.get("ens16x", {})
+        scd41 = data.get("scd41", {})
+        vcnl = data.get("vcnl4040", {})
+        if "timestamp" not in data or not ens210 or not ens16x:
+            return None
         return {
             "timestamp": data.get("timestamp"),
-            "temperature_c": data["ens210"].get("temperature_c"),
-            "temperature_f": data["ens210"].get("temperature_f"),
-            "humidity": data["ens210"].get("humidity"),
-            "ens210_status": data["ens210"].get("status"),
-            "ens16x_status": data["ens16x"].get("status"),
-            "etvoc": data["ens16x"].get("etvoc"),
-            "eco2": data["ens16x"].get("eco2"),
-            "aqi": data["ens16x"].get("aqi"),
+            "model": data.get("model", "base"),
+            "temperature_c": ens210.get("temperature_c"),
+            "temperature_f": ens210.get("temperature_f"),
+            "humidity": ens210.get("humidity"),
+            "ens210_status": ens210.get("status"),
+            "ens16x_status": ens16x.get("status"),
+            "etvoc": ens16x.get("etvoc"),
+            "eco2": ens16x.get("eco2"),
+            "aqi": ens16x.get("aqi"),
+            "aqi_s": ens16x.get("aqi_s"),
+            "aqi_uba": ens16x.get("aqi_uba"),
+            "co2": scd41.get("co2"),
+            "lux": vcnl.get("lux"),
         }
     except (KeyError, TypeError, json.JSONDecodeError):
         return None
@@ -67,14 +134,14 @@ class SerialReaderThread(QThread):
     """Background thread for reading serial data."""
     data_received = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
-    
+
     def __init__(self, port, baud=115200):
         super().__init__()
         self.port = port
         self.baud = baud
         self.running = False
         self.serial = None
-    
+
     def run(self):
         try:
             self.serial = serial.Serial(self.port, self.baud, timeout=0.1)
@@ -96,440 +163,589 @@ class SerialReaderThread(QThread):
         finally:
             if self.serial and self.serial.is_open:
                 self.serial.close()
-    
+
     def stop(self):
         self.running = False
         self.wait(2000)
 
 
-class SensorDisplay(QFrame):
-    """Widget showing current sensor values."""
+# ---------------------------------------------------------------------------
+# UI widgets
+# ---------------------------------------------------------------------------
+
+class SensorTile(QFrame):
+    """A modern card-style tile showing a single sensor value."""
+
+    def __init__(self, title, unit, accent, placeholder="--"):
+        super().__init__()
+        self.accent = accent
+        self.placeholder = placeholder
+        self.setObjectName("sensorTile")
+        self.setStyleSheet(f"""
+            QFrame#sensorTile {{
+                background-color: {Theme.CARD};
+                border: 1px solid {Theme.CARD_BORDER};
+                border-radius: 10px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(2)
+
+        title_row = QHBoxLayout()
+        dot = QLabel("\u25cf")
+        dot.setStyleSheet(f"color: {accent}; font-size: 9px; background: transparent; border: none;")
+        title_label = QLabel(title.upper())
+        title_label.setStyleSheet(
+            f"color: {Theme.MUTED}; font-size: 10px; font-weight: 600; "
+            "letter-spacing: 1px; background: transparent; border: none;"
+        )
+        title_row.addWidget(dot)
+        title_row.addWidget(title_label)
+        title_row.addStretch()
+        layout.addLayout(title_row)
+
+        value_row = QHBoxLayout()
+        value_row.setSpacing(4)
+        self.value_label = QLabel(placeholder)
+        self.value_label.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        self.value_label.setStyleSheet(f"color: {Theme.TEXT}; background: transparent; border: none;")
+        unit_label = QLabel(unit)
+        unit_label.setStyleSheet(f"color: {Theme.MUTED}; font-size: 12px; background: transparent; border: none;")
+        value_row.addWidget(self.value_label)
+        value_row.addWidget(unit_label, alignment=Qt.AlignmentFlag.AlignBottom)
+        value_row.addStretch()
+        layout.addLayout(value_row)
+
+    def set_value(self, text, color=None):
+        self.value_label.setText(text)
+        self.value_label.setStyleSheet(
+            f"color: {color or Theme.TEXT}; background: transparent; border: none;"
+        )
+
+    def clear(self):
+        self.set_value(self.placeholder)
+
+
+class SensorDisplay(QWidget):
+    """Row of tiles showing current sensor values. Pro tiles appear when a
+    Pro device is detected."""
+
     def __init__(self):
         super().__init__()
-        self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
-        self.setup_ui()
-    
-    def setup_ui(self):
-        layout = QGridLayout(self)
-        layout.setSpacing(15)
-        
-        # Style for value labels
-        value_font = QFont("Segoe UI", 24, QFont.Weight.Bold)
-        unit_font = QFont("Segoe UI", 12)
-        label_font = QFont("Segoe UI", 10)
-        
-        # Temperature
-        self.temp_label = QLabel("--.-")
-        self.temp_label.setFont(value_font)
-        self.temp_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        temp_unit = QLabel("°C")
-        temp_unit.setFont(unit_font)
-        temp_title = QLabel("Temperature")
-        temp_title.setFont(label_font)
-        temp_title.setStyleSheet("color: #666;")
-        
-        # Humidity
-        self.humidity_label = QLabel("--.-")
-        self.humidity_label.setFont(value_font)
-        self.humidity_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hum_unit = QLabel("%")
-        hum_unit.setFont(unit_font)
-        hum_title = QLabel("Humidity")
-        hum_title.setFont(label_font)
-        hum_title.setStyleSheet("color: #666;")
-        
-        # VOC Level
-        self.aqi_label = QLabel("---")
-        self.aqi_label.setFont(value_font)
-        self.aqi_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        aqi_unit = QLabel("")
-        aqi_unit.setFont(unit_font)
-        aqi_title = QLabel("VOC Level")
-        aqi_title.setFont(label_font)
-        aqi_title.setStyleSheet("color: #666;")
-        
-        # eCO2
-        self.eco2_label = QLabel("----")
-        self.eco2_label.setFont(value_font)
-        self.eco2_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        eco2_unit = QLabel("ppm")
-        eco2_unit.setFont(unit_font)
-        eco2_title = QLabel("eCO2")
-        eco2_title.setFont(label_font)
-        eco2_title.setStyleSheet("color: #666;")
-        
-        # eTVOC
-        self.etvoc_label = QLabel("----")
-        self.etvoc_label.setFont(value_font)
-        self.etvoc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        etvoc_unit = QLabel("ppb")
-        etvoc_unit.setFont(unit_font)
-        etvoc_title = QLabel("eTVOC")
-        etvoc_title.setFont(label_font)
-        etvoc_title.setStyleSheet("color: #666;")
-        
-        # Layout grid
-        col = 0
-        for title, value, unit in [
-            (temp_title, self.temp_label, temp_unit),
-            (hum_title, self.humidity_label, hum_unit),
-            (aqi_title, self.aqi_label, aqi_unit),
-            (eco2_title, self.eco2_label, eco2_unit),
-            (etvoc_title, self.etvoc_label, etvoc_unit),
-        ]:
-            box = QVBoxLayout()
-            box.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
-            row = QHBoxLayout()
-            row.addWidget(value)
-            row.addWidget(unit, alignment=Qt.AlignmentFlag.AlignBottom)
-            box.addLayout(row)
-            layout.addLayout(box, 0, col)
-            col += 1
-    
+        self.layout = QGridLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(10)
+
+        self.temp_tile = SensorTile("Temperature", "°C", Theme.TEMP, "--.-")
+        self.hum_tile = SensorTile("Humidity", "%", Theme.HUM, "--.-")
+        self.voc_tile = SensorTile("VOC Level", "", Theme.VOC, "---")
+        self.eco2_tile = SensorTile("eCO2", "ppm", Theme.ECO2, "----")
+        self.etvoc_tile = SensorTile("eTVOC", "ppb", Theme.ETVOC, "----")
+        self.co2_tile = SensorTile("CO2 (NDIR)", "ppm", Theme.CO2, "----")
+        self.lux_tile = SensorTile("Ambient Light", "lx", Theme.LUX, "----")
+
+        self.base_tiles = [
+            self.temp_tile, self.hum_tile, self.voc_tile,
+            self.eco2_tile, self.etvoc_tile,
+        ]
+        self.pro_tiles = [self.co2_tile, self.lux_tile]
+
+        for col, tile in enumerate(self.base_tiles + self.pro_tiles):
+            self.layout.addWidget(tile, 0, col)
+            self.layout.setColumnStretch(col, 1)
+
+        # Pro tiles hidden until a pro device reports in
+        self._pro_visible = False
+        for tile in self.pro_tiles:
+            tile.hide()
+
+    def set_pro_visible(self, visible):
+        if visible == self._pro_visible:
+            return
+        self._pro_visible = visible
+        for tile in self.pro_tiles:
+            tile.setVisible(visible)
+
     def update_values(self, data):
         temp = data.get("temperature_c")
         hum = data.get("humidity")
         aqi = data.get("aqi")
         eco2 = data.get("eco2")
         etvoc = data.get("etvoc")
-        
+        co2 = data.get("co2")
+        lux = data.get("lux")
+
         if temp is not None:
-            self.temp_label.setText(f"{temp:.1f}")
+            self.temp_tile.set_value(f"{temp:.1f}")
         if hum is not None:
-            self.humidity_label.setText(f"{hum:.1f}")
+            self.hum_tile.set_value(f"{hum:.1f}")
         if aqi is not None:
-            self.aqi_label.setText(f"{int(aqi)}")
-            # Color code VOC Level (matches canonical TVOC bands / LED gradient)
-            if aqi <= 50:
-                self.aqi_label.setStyleSheet("color: #2e7d32;")  # Green
-            elif aqi <= 100:
-                self.aqi_label.setStyleSheet("color: #f9a825;")  # Yellow
-            elif aqi <= 200:
-                self.aqi_label.setStyleSheet("color: #ef6c00;")  # Orange
-            else:
-                self.aqi_label.setStyleSheet("color: #c62828;")  # Red
+            self.voc_tile.set_value(f"{int(aqi)}", voc_color(aqi))
         if eco2 is not None:
-            self.eco2_label.setText(f"{int(eco2)}")
+            self.eco2_tile.set_value(f"{int(eco2)}")
         if etvoc is not None:
-            self.etvoc_label.setText(f"{int(etvoc)}")
-    
+            self.etvoc_tile.set_value(f"{int(etvoc)}")
+        if self._pro_visible:
+            if co2 is not None:
+                self.co2_tile.set_value(f"{int(co2)}", co2_color(co2))
+            if lux is not None:
+                self.lux_tile.set_value(f"{lux:.0f}")
+
     def clear_values(self):
-        self.temp_label.setText("--.-")
-        self.humidity_label.setText("--.-")
-        self.aqi_label.setText("---")
-        self.aqi_label.setStyleSheet("")
-        self.eco2_label.setText("----")
-        self.etvoc_label.setText("----")
+        for tile in self.base_tiles + self.pro_tiles:
+            tile.clear()
 
 
 class PlotCanvas(FigureCanvas):
-    """Matplotlib canvas for plotting sensor data."""
+    """Matplotlib canvas for plotting sensor data, dark-themed."""
+
     def __init__(self, parent=None):
         self.fig = Figure(figsize=(10, 6), dpi=100)
-        self.fig.set_facecolor('#fafafa')
+        self.fig.set_facecolor(Theme.CARD)
         super().__init__(self.fig)
         self.setParent(parent)
-        
-        # Create subplots
-        self.ax_temp_hum = self.fig.add_subplot(311)
-        self.ax_aqi = self.fig.add_subplot(312, sharex=self.ax_temp_hum)
-        self.ax_gases = self.fig.add_subplot(313, sharex=self.ax_temp_hum)
-        
-        self.fig.tight_layout(pad=2.0)
-        self.setup_plots()
-    
-    def setup_plots(self):
-        """Initialize plot styling."""
-        for ax in [self.ax_temp_hum, self.ax_aqi, self.ax_gases]:
-            ax.set_facecolor('#ffffff')
-            ax.grid(True, linestyle='--', alpha=0.7)
-        
-        self.ax_temp_hum.set_ylabel("Temp (°C) / Humidity (%)")
-        self.ax_aqi.set_ylabel("VOC Level")
-        self.ax_gases.set_ylabel("eCO2 (ppm) / eTVOC (ppb)")
-        self.ax_gases.set_xlabel("Time (seconds)")
-    
-    def update_plot(self, x, temp, hum, aqi, eco2, etvoc):
-        """Update all three plots with new data."""
-        self.ax_temp_hum.cla()
-        self.ax_aqi.cla()
-        self.ax_gases.cla()
-        
-        # Temperature and Humidity
-        self.ax_temp_hum.plot(x, temp, label="Temperature (°C)", color='#e53935', linewidth=1.5)
-        self.ax_temp_hum.plot(x, hum, label="Humidity (%)", color='#1e88e5', linewidth=1.5)
-        self.ax_temp_hum.set_ylabel("Temp / Humidity")
-        self.ax_temp_hum.legend(loc="upper left", fontsize=8)
-        self.ax_temp_hum.grid(True, linestyle='--', alpha=0.7)
-        
-        # VOC Level
-        self.ax_aqi.plot(x, aqi, label="VOC Level", color='#7cb342', linewidth=1.5)
-        self.ax_aqi.set_ylabel("VOC Level")
-        self.ax_aqi.legend(loc="upper left", fontsize=8)
-        self.ax_aqi.grid(True, linestyle='--', alpha=0.7)
-        
-        # Gases
-        self.ax_gases.plot(x, eco2, label="eCO2 (ppm)", color='#8e24aa', linewidth=1.5)
-        self.ax_gases.plot(x, etvoc, label="eTVOC (ppb)", color='#00897b', linewidth=1.5)
-        self.ax_gases.set_ylabel("Gas levels")
-        self.ax_gases.set_xlabel("Time (s)")
-        self.ax_gases.legend(loc="upper left", fontsize=8)
-        self.ax_gases.grid(True, linestyle='--', alpha=0.7)
-        
-        self.fig.tight_layout(pad=2.0)
+        self.pro_mode = False
+        self.ax_hum = None   # twin of climate (humidity)
+        self.ax_lux = None   # twin of tvoc (ambient light), pro only
+        self._build_axes()
+
+    def _build_axes(self):
+        self.fig.clf()
+        # 2x2 grid: climate, VOC level, CO2, TVOC
+        self.ax_climate = self.fig.add_subplot(221)
+        self.ax_voc = self.fig.add_subplot(222, sharex=self.ax_climate)
+        self.ax_co2 = self.fig.add_subplot(223, sharex=self.ax_climate)
+        self.ax_tvoc = self.fig.add_subplot(224, sharex=self.ax_climate)
+        self.ax_hum = None
+        self.ax_lux = None
+        # Style the empty axes up front so they match the dark theme before
+        # any data has arrived (otherwise matplotlib draws white panels).
+        for ax, title in (
+            (self.ax_climate, "CLIMATE"),
+            (self.ax_voc, "VOC LEVEL"),
+            (self.ax_co2, "CO2"),
+            (self.ax_tvoc, "TVOC"),
+        ):
+            self._style_axis(ax, title)
+        self._apply_layout()
+
+    def _apply_layout(self):
+        self.fig.subplots_adjust(left=0.075, right=0.925, top=0.9,
+                                 bottom=0.12, hspace=0.55, wspace=0.32)
+
+    def _style_axis(self, ax, title):
+        """Style a primary axis: dark panel, y-only grid, no top/right spines."""
+        ax.set_facecolor(Theme.CARD)
+        ax.set_title(title, color=Theme.TEXT, fontsize=10.5, fontweight="bold",
+                     loc="left", pad=10)
+        ax.grid(True, axis="y", linestyle="-", linewidth=0.6,
+                color=Theme.GRID, alpha=0.45)
+        ax.set_axisbelow(True)
+        ax.tick_params(colors=Theme.MUTED, labelsize=8, length=0)
+        ax.margins(x=0.02, y=0.25)
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(Theme.CARD_BORDER)
+        self._no_offset(ax)
+
+    def _style_twin(self, ax, color):
+        """Style a right-hand twin axis, tinted to match its series color."""
+        ax.set_facecolor("none")
+        ax.tick_params(colors=color, labelsize=8, length=0)
+        ax.margins(y=0.25)
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
+        for side in ("top", "left", "bottom"):
+            ax.spines[side].set_visible(False)
+        ax.spines["right"].set_color(Theme.CARD_BORDER)
+        self._no_offset(ax)
+
+    @staticmethod
+    def _no_offset(ax):
+        """Disable the +1e1-style offset label that clutters small ranges."""
+        try:
+            ax.ticklabel_format(useOffset=False, axis="y", style="plain")
+        except (AttributeError, ValueError):
+            pass
+
+    def _legend(self, ax, handles, labels):
+        # Anchor just above the top-right of the panel so lines never collide
+        # with the plotted data.
+        legend = ax.legend(handles, labels, loc="lower right",
+                           bbox_to_anchor=(1.0, 1.0), fontsize=7.5,
+                           frameon=False, ncol=len(labels), labelcolor=Theme.MUTED,
+                           handlelength=1.3, handletextpad=0.5, columnspacing=1.1,
+                           borderaxespad=0.0)
+        return legend
+
+    def set_pro_mode(self, pro):
+        self.pro_mode = pro
+
+    def update_plot(self, x, series):
+        """Redraw all plots. `series` is a dict of lists keyed by field."""
+        lw = 1.9
+        cap = "round"
+
+        # ---- CLIMATE: temperature (left) + humidity (right twin) ----
+        ax = self.ax_climate
+        ax.cla()
+        self._style_axis(ax, "CLIMATE")
+        ax.tick_params(labelbottom=False)
+        lt, = ax.plot(x, series["temp"], color=Theme.TEMP, lw=lw, solid_capstyle=cap)
+        ax.set_ylabel("°C", color=Theme.TEMP, fontsize=8)
+        if self.ax_hum is None:
+            self.ax_hum = ax.twinx()
+        self.ax_hum.cla()
+        self._style_twin(self.ax_hum, Theme.HUM)
+        lh, = self.ax_hum.plot(x, series["hum"], color=Theme.HUM, lw=lw, solid_capstyle=cap)
+        self.ax_hum.set_ylabel("%", color=Theme.HUM, fontsize=8)
+        self._legend(ax, [lt, lh], ["Temp", "Humidity"])
+
+        # ---- VOC LEVEL: single line with soft fill ----
+        ax = self.ax_voc
+        ax.cla()
+        self._style_axis(ax, "VOC LEVEL")
+        ax.tick_params(labelbottom=False)
+        ax.plot(x, series["aqi"], color=Theme.VOC, lw=lw, solid_capstyle=cap)
+        ax.fill_between(x, series["aqi"], color=Theme.VOC, alpha=0.13)
+
+        # ---- CO2: eCO2 (+ true NDIR CO2 on pro), shared ppm axis ----
+        ax = self.ax_co2
+        ax.cla()
+        self._style_axis(ax, "CO2")
+        ax.set_xlabel("Time (s)", color=Theme.MUTED, fontsize=8)
+        ax.set_ylabel("ppm", color=Theme.MUTED, fontsize=8)
+        handles = [ax.plot(x, series["eco2"], color=Theme.ECO2, lw=lw, solid_capstyle=cap)[0]]
+        labels = ["eCO2"]
+        if self.pro_mode:
+            handles.append(ax.plot(x, series["co2"], color=Theme.CO2, lw=lw, solid_capstyle=cap)[0])
+            labels.append("CO2 NDIR")
+        self._legend(ax, handles, labels)
+
+        # ---- TVOC: eTVOC (+ ambient light twin on pro) ----
+        ax = self.ax_tvoc
+        ax.cla()
+        self._style_axis(ax, "TVOC / LIGHT" if self.pro_mode else "TVOC")
+        ax.set_xlabel("Time (s)", color=Theme.MUTED, fontsize=8)
+        lv, = ax.plot(x, series["etvoc"], color=Theme.ETVOC, lw=lw, solid_capstyle=cap)
+        ax.set_ylabel("ppb", color=Theme.ETVOC, fontsize=8)
+        if self.pro_mode:
+            if self.ax_lux is None:
+                self.ax_lux = ax.twinx()
+            self.ax_lux.cla()
+            self._style_twin(self.ax_lux, Theme.LUX)
+            ll, = self.ax_lux.plot(x, series["lux"], color=Theme.LUX, lw=lw, solid_capstyle=cap)
+            self.ax_lux.set_ylabel("lx", color=Theme.LUX, fontsize=8)
+            self._legend(ax, [lv, ll], ["eTVOC", "Light"])
+        else:
+            if self.ax_lux is not None:
+                self.ax_lux.remove()
+                self.ax_lux = None
+
+        self._apply_layout()
         self.draw()
+
+
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
+
+FIELDS = ("temp", "hum", "aqi", "eco2", "etvoc", "co2", "lux")
 
 
 class AirCubeApp(QMainWindow):
     """Main application window."""
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{__app_name__} v{__version__} - Air Quality Monitor")
-        self.setMinimumSize(900, 700)
-        
+        self.setWindowTitle(f"{__app_name__} v{__version__} — Air Quality Monitor")
+        self.setMinimumSize(1080, 760)
+
         # Data storage
         self.max_points = 300
         self.data_buffer = collections.deque(maxlen=self.max_points)
         self.t0 = None
         self.sample_count = 0
-        
+        self.model = None
+
         # Serial and CSV
         self.serial_thread = None
         self.csv_file = None
         self.csv_writer = None
         self.csv_path = None
-        
+
         self.setup_ui()
         self.setup_timers()
         self.refresh_ports()
-    
+
+    # -- UI -----------------------------------------------------------------
+
     def setup_ui(self):
-        """Build the main UI."""
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        
-        # Connection panel
-        conn_group = QGroupBox("Connection")
-        conn_layout = QHBoxLayout(conn_group)
-        
-        conn_layout.addWidget(QLabel("Port:"))
+        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(14, 14, 14, 10)
+
+        # Header: app name, model badge, connection controls
+        header = QHBoxLayout()
+        header.setSpacing(10)
+
+        title = QLabel(__app_name__)
+        title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {Theme.TEXT};")
+        header.addWidget(title)
+
+        self.model_badge = QLabel("")
+        self.model_badge.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self.model_badge.hide()
+        header.addWidget(self.model_badge)
+
+        header.addStretch()
+
+        header.addWidget(self._muted_label("PORT"))
         self.port_combo = QComboBox()
-        self.port_combo.setMinimumWidth(150)
-        conn_layout.addWidget(self.port_combo)
-        
-        self.refresh_btn = QPushButton("Refresh")
+        self.port_combo.setMinimumWidth(220)
+        header.addWidget(self.port_combo)
+
+        self.refresh_btn = QPushButton("\u21bb")
+        self.refresh_btn.setFixedWidth(34)
+        self.refresh_btn.setToolTip("Refresh ports")
         self.refresh_btn.clicked.connect(self.refresh_ports)
-        conn_layout.addWidget(self.refresh_btn)
-        
-        conn_layout.addSpacing(20)
-        
+        header.addWidget(self.refresh_btn)
+
         self.connect_btn = QPushButton("Connect")
-        self.connect_btn.setMinimumWidth(100)
+        self.connect_btn.setMinimumWidth(110)
+        self.connect_btn.setObjectName("connectBtn")
         self.connect_btn.clicked.connect(self.toggle_connection)
-        self.connect_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
+        self._set_connect_style(connected=False)
+        header.addWidget(self.connect_btn)
+
+        main_layout.addLayout(header)
+
+        # Sensor tiles
+        self.sensor_display = SensorDisplay()
+        main_layout.addWidget(self.sensor_display)
+
+        # Plot card
+        plot_card = QFrame()
+        plot_card.setObjectName("plotCard")
+        plot_card.setStyleSheet(f"""
+            QFrame#plotCard {{
+                background-color: {Theme.CARD};
+                border: 1px solid {Theme.CARD_BORDER};
+                border-radius: 10px;
+            }}
         """)
-        conn_layout.addWidget(self.connect_btn)
-        
-        conn_layout.addSpacing(30)
-        
-        # CSV logging
+        plot_layout = QVBoxLayout(plot_card)
+        plot_layout.setContentsMargins(8, 8, 8, 8)
+        self.canvas = PlotCanvas()
+        plot_layout.addWidget(self.canvas)
+        main_layout.addWidget(plot_card, stretch=1)
+
+        # Footer: CSV logging + history size
+        footer = QHBoxLayout()
+        footer.setSpacing(10)
+
         self.csv_checkbox = QCheckBox("Log to CSV")
         self.csv_checkbox.stateChanged.connect(self.toggle_csv_logging)
-        conn_layout.addWidget(self.csv_checkbox)
-        
+        footer.addWidget(self.csv_checkbox)
+
         self.csv_path_label = QLabel("No file selected")
-        self.csv_path_label.setStyleSheet("color: #666; font-style: italic;")
-        conn_layout.addWidget(self.csv_path_label)
-        
-        self.csv_browse_btn = QPushButton("Browse...")
+        self.csv_path_label.setStyleSheet(f"color: {Theme.MUTED}; font-style: italic;")
+        footer.addWidget(self.csv_path_label)
+
+        self.csv_browse_btn = QPushButton("Browse…")
         self.csv_browse_btn.clicked.connect(self.browse_csv)
-        conn_layout.addWidget(self.csv_browse_btn)
-        
-        conn_layout.addStretch()
-        
-        # Settings
-        conn_layout.addWidget(QLabel("History:"))
+        footer.addWidget(self.csv_browse_btn)
+
+        footer.addStretch()
+
+        footer.addWidget(self._muted_label("HISTORY"))
         self.history_spin = QSpinBox()
         self.history_spin.setRange(50, 1000)
         self.history_spin.setValue(300)
         self.history_spin.setSuffix(" pts")
         self.history_spin.valueChanged.connect(self.update_max_points)
-        conn_layout.addWidget(self.history_spin)
-        
-        main_layout.addWidget(conn_group)
-        
-        # Sensor display panel
-        self.sensor_display = SensorDisplay()
-        main_layout.addWidget(self.sensor_display)
-        
-        # Plot canvas
-        plot_group = QGroupBox("Sensor History")
-        plot_layout = QVBoxLayout(plot_group)
-        self.canvas = PlotCanvas()
-        plot_layout.addWidget(self.canvas)
-        main_layout.addWidget(plot_group, stretch=1)
-        
+        footer.addWidget(self.history_spin)
+
+        main_layout.addLayout(footer)
+
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        
+
         self.connection_status = QLabel("Disconnected")
-        self.connection_status.setStyleSheet("color: #c62828; font-weight: bold;")
+        self.connection_status.setStyleSheet(f"color: {Theme.CRIT}; font-weight: bold;")
         self.status_bar.addWidget(self.connection_status)
-        
+
         self.sample_status = QLabel("Samples: 0")
+        self.sample_status.setStyleSheet(f"color: {Theme.MUTED};")
         self.status_bar.addPermanentWidget(self.sample_status)
-        
+
         self.csv_status = QLabel("")
         self.status_bar.addPermanentWidget(self.csv_status)
-    
+
+    @staticmethod
+    def _muted_label(text):
+        label = QLabel(text)
+        label.setStyleSheet(
+            f"color: {Theme.MUTED}; font-size: 10px; font-weight: 600; letter-spacing: 1px;"
+        )
+        return label
+
+    def _set_connect_style(self, connected):
+        color, hover = ("#da3633", "#f85149") if connected else ("#238636", "#2ea043")
+        self.connect_btn.setText("Disconnect" if connected else "Connect")
+        self.connect_btn.setStyleSheet(f"""
+            QPushButton#connectBtn {{
+                background-color: {color};
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
+            }}
+            QPushButton#connectBtn:hover {{ background-color: {hover}; }}
+            QPushButton#connectBtn:disabled {{ background-color: #30363d; color: {Theme.MUTED}; }}
+        """)
+
+    def _set_model_badge(self, model):
+        if model == "pro":
+            self.model_badge.setText("PRO")
+            self.model_badge.setStyleSheet(f"""
+                color: #0d1117; background-color: {Theme.LUX};
+                border-radius: 4px; padding: 2px 8px;
+            """)
+        else:
+            self.model_badge.setText("BASE")
+            self.model_badge.setStyleSheet(f"""
+                color: {Theme.TEXT}; background-color: #30363d;
+                border-radius: 4px; padding: 2px 8px;
+            """)
+        self.model_badge.show()
+
+    # -- Timers / ports -------------------------------------------------------
+
     def setup_timers(self):
-        """Setup update timer for plots."""
         self.plot_timer = QTimer()
         self.plot_timer.timeout.connect(self.update_plot)
-        self.plot_timer.start(500)  # Update plot every 500ms
-    
+        self.plot_timer.start(500)
+
     def refresh_ports(self):
-        """Refresh the list of available serial ports."""
         self.port_combo.clear()
         ports = list_ports.comports()
         for p in ports:
-            self.port_combo.addItem(f"{p.device} - {p.description}", p.device)
+            self.port_combo.addItem(f"{p.device} — {p.description}", p.device)
         if not ports:
             self.port_combo.addItem("No ports found", None)
-    
+
+    # -- Connection -----------------------------------------------------------
+
     def toggle_connection(self):
-        """Connect or disconnect from the serial port."""
         if self.serial_thread and self.serial_thread.running:
             self.disconnect_serial()
         else:
             self.connect_serial()
-    
+
     def connect_serial(self):
-        """Start serial connection."""
         port = self.port_combo.currentData()
         if not port:
             QMessageBox.warning(self, "No Port", "Please select a serial port.")
             return
-        
+
         self.serial_thread = SerialReaderThread(port)
         self.serial_thread.data_received.connect(self.on_data_received)
         self.serial_thread.error_occurred.connect(self.on_serial_error)
         self.serial_thread.start()
-        
-        self.connect_btn.setText("Disconnect")
-        self.connect_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f44336;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #da190b;
-            }
-        """)
+
+        self._set_connect_style(connected=True)
         self.port_combo.setEnabled(False)
         self.refresh_btn.setEnabled(False)
-        
+
         self.connection_status.setText(f"Connected to {port}")
-        self.connection_status.setStyleSheet("color: #2e7d32; font-weight: bold;")
-        
+        self.connection_status.setStyleSheet(f"color: {Theme.GOOD}; font-weight: bold;")
+
         # Reset data
         self.data_buffer.clear()
         self.t0 = None
         self.sample_count = 0
+        self.model = None
         self.sensor_display.clear_values()
-    
+
     def disconnect_serial(self):
-        """Stop serial connection."""
         if self.serial_thread:
             self.serial_thread.stop()
             self.serial_thread = None
-        
-        self.connect_btn.setText("Connect")
-        self.connect_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
+
+        self._set_connect_style(connected=False)
         self.port_combo.setEnabled(True)
         self.refresh_btn.setEnabled(True)
-        
+
         self.connection_status.setText("Disconnected")
-        self.connection_status.setStyleSheet("color: #c62828; font-weight: bold;")
-    
+        self.connection_status.setStyleSheet(f"color: {Theme.CRIT}; font-weight: bold;")
+
+    # -- Data handling ----------------------------------------------------------
+
     def on_data_received(self, data):
-        """Handle incoming sensor data."""
         ts = data.get("timestamp")
         if ts is None:
             return
-        
+
         try:
             ts = float(ts)
         except (TypeError, ValueError):
             return
-        
+
         if self.t0 is None:
             self.t0 = ts
-        
+
         # Convert to seconds (firmware sends ms)
         t_rel = (ts - self.t0) / 1000.0 if ts > 1000 else (ts - self.t0)
-        
-        temp_c = data.get("temperature_c")
-        hum = data.get("humidity")
-        aqi = data.get("aqi")
-        eco2 = data.get("eco2")
-        etvoc = data.get("etvoc")
-        
-        if temp_c is None or hum is None or aqi is None:
+
+        # Detect model change (first packet, or device swap)
+        model = data.get("model", "base")
+        if model != self.model:
+            self.model = model
+            is_pro = model == "pro"
+            self._set_model_badge(model)
+            self.sensor_display.set_pro_visible(is_pro)
+            self.canvas.set_pro_mode(is_pro)
+
+        def as_float(value):
+            if value is None:
+                return math.nan
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return math.nan
+
+        temp_c = as_float(data.get("temperature_c"))
+        hum = as_float(data.get("humidity"))
+        aqi = as_float(data.get("aqi"))
+        if math.isnan(temp_c) or math.isnan(hum) or math.isnan(aqi):
             return
-        
-        try:
-            temp_c = float(temp_c)
-            hum = float(hum)
-            aqi = float(aqi)
-            eco2 = float(eco2) if eco2 is not None else float("nan")
-            etvoc = float(etvoc) if etvoc is not None else float("nan")
-        except (TypeError, ValueError):
-            return
-        
-        # Store data
-        self.data_buffer.append((t_rel, temp_c, hum, aqi, eco2, etvoc))
+
+        point = {
+            "t": t_rel,
+            "temp": temp_c,
+            "hum": hum,
+            "aqi": aqi,
+            "eco2": as_float(data.get("eco2")),
+            "etvoc": as_float(data.get("etvoc")),
+            "co2": as_float(data.get("co2")),
+            "lux": as_float(data.get("lux")),
+        }
+        self.data_buffer.append(point)
         self.sample_count += 1
         self.sample_status.setText(f"Samples: {self.sample_count}")
-        
-        # Update display
+
         self.sensor_display.update_values(data)
-        
-        # Write to CSV
+
         if self.csv_writer:
             row = [
                 data.get("timestamp"),
@@ -541,37 +757,35 @@ class AirCubeApp(QMainWindow):
                 data.get("etvoc"),
                 data.get("eco2"),
                 data.get("aqi"),
+                data.get("aqi_s"),
+                data.get("aqi_uba"),
+                data.get("model"),
+                data.get("co2"),
+                data.get("lux"),
             ]
             self.csv_writer.writerow(row)
             self.csv_file.flush()
-    
+
     def on_serial_error(self, error):
-        """Handle serial errors."""
         QMessageBox.critical(self, "Serial Error", f"Serial connection error:\n{error}")
         self.disconnect_serial()
-    
+
     def update_plot(self):
-        """Update the plot with current data."""
         if not self.data_buffer:
             return
-        
-        x = [p[0] for p in self.data_buffer]
-        temp = [p[1] for p in self.data_buffer]
-        hum = [p[2] for p in self.data_buffer]
-        aqi = [p[3] for p in self.data_buffer]
-        eco2 = [p[4] for p in self.data_buffer]
-        etvoc = [p[5] for p in self.data_buffer]
-        
-        self.canvas.update_plot(x, temp, hum, aqi, eco2, etvoc)
-    
+
+        x = [p["t"] for p in self.data_buffer]
+        series = {field: [p[field] for p in self.data_buffer] for field in FIELDS}
+        self.canvas.update_plot(x, series)
+
     def update_max_points(self, value):
-        """Update the data buffer size."""
         self.max_points = value
         old_data = list(self.data_buffer)
         self.data_buffer = collections.deque(old_data[-value:], maxlen=value)
-    
+
+    # -- CSV logging ------------------------------------------------------------
+
     def toggle_csv_logging(self, state):
-        """Enable or disable CSV logging."""
         if state == Qt.CheckState.Checked.value:
             if not self.csv_path:
                 self.browse_csv()
@@ -581,9 +795,8 @@ class AirCubeApp(QMainWindow):
             self.start_csv_logging()
         else:
             self.stop_csv_logging()
-    
+
     def browse_csv(self):
-        """Browse for CSV file location."""
         default_name = f"aircube_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         path, _ = QFileDialog.getSaveFileName(
             self, "Save CSV Log", default_name, "CSV Files (*.csv)"
@@ -591,34 +804,31 @@ class AirCubeApp(QMainWindow):
         if path:
             self.csv_path = path
             self.csv_path_label.setText(os.path.basename(path))
-            self.csv_path_label.setStyleSheet("color: #333;")
-    
+            self.csv_path_label.setStyleSheet(f"color: {Theme.TEXT};")
+
     def start_csv_logging(self):
-        """Start logging to CSV file."""
         if not self.csv_path:
             return
-        
+
         new_file = not os.path.exists(self.csv_path) or os.path.getsize(self.csv_path) == 0
         self.csv_file = open(self.csv_path, "a", newline="")
         self.csv_writer = csv.writer(self.csv_file)
-        
+
         if new_file:
             self.csv_writer.writerow(CSV_HEADER)
             self.csv_file.flush()
-        
+
         self.csv_status.setText(f"Logging to {os.path.basename(self.csv_path)}")
-        self.csv_status.setStyleSheet("color: #2e7d32;")
-    
+        self.csv_status.setStyleSheet(f"color: {Theme.GOOD};")
+
     def stop_csv_logging(self):
-        """Stop logging to CSV file."""
         if self.csv_file:
             self.csv_file.close()
             self.csv_file = None
             self.csv_writer = None
         self.csv_status.setText("")
-    
+
     def closeEvent(self, event):
-        """Handle window close."""
         self.disconnect_serial()
         self.stop_csv_logging()
         event.accept()
@@ -627,49 +837,72 @@ class AirCubeApp(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    
-    # Set application-wide font
+
     font = QFont("Segoe UI", 10)
     app.setFont(font)
-    
-    # Set stylesheet for modern look
-    app.setStyleSheet("""
-        QMainWindow {
-            background-color: #f5f5f5;
-        }
-        QGroupBox {
-            font-weight: bold;
-            border: 1px solid #ddd;
+
+    # Dark, modern application-wide stylesheet
+    app.setStyleSheet(f"""
+        QMainWindow, QWidget {{
+            background-color: {Theme.BG};
+            color: {Theme.TEXT};
+        }}
+        QComboBox, QSpinBox {{
+            padding: 6px 8px;
+            border: 1px solid {Theme.CARD_BORDER};
             border-radius: 6px;
-            margin-top: 12px;
-            padding-top: 10px;
-            background-color: white;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 5px;
-        }
-        QComboBox, QSpinBox {
-            padding: 5px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            background: white;
-        }
-        QComboBox:hover, QSpinBox:hover {
-            border-color: #999;
-        }
-        QCheckBox {
+            background-color: {Theme.CARD};
+            color: {Theme.TEXT};
+            selection-background-color: {Theme.ACCENT};
+        }}
+        QComboBox:hover, QSpinBox:hover {{
+            border-color: {Theme.MUTED};
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {Theme.CARD};
+            color: {Theme.TEXT};
+            border: 1px solid {Theme.CARD_BORDER};
+            selection-background-color: {Theme.ACCENT};
+        }}
+        QPushButton {{
+            background-color: #21262d;
+            color: {Theme.TEXT};
+            border: 1px solid {Theme.CARD_BORDER};
+            padding: 6px 12px;
+            border-radius: 6px;
+        }}
+        QPushButton:hover {{
+            background-color: #30363d;
+            border-color: {Theme.MUTED};
+        }}
+        QCheckBox {{
             spacing: 8px;
-        }
-        QStatusBar {
-            background-color: #e0e0e0;
-        }
+            color: {Theme.TEXT};
+        }}
+        QCheckBox::indicator {{
+            width: 16px; height: 16px;
+            border: 1px solid {Theme.CARD_BORDER};
+            border-radius: 4px;
+            background-color: {Theme.CARD};
+        }}
+        QCheckBox::indicator:checked {{
+            background-color: {Theme.ACCENT};
+            border-color: {Theme.ACCENT};
+        }}
+        QStatusBar {{
+            background-color: {Theme.CARD};
+            border-top: 1px solid {Theme.CARD_BORDER};
+        }}
+        QToolTip {{
+            background-color: {Theme.CARD};
+            color: {Theme.TEXT};
+            border: 1px solid {Theme.CARD_BORDER};
+        }}
     """)
-    
+
     window = AirCubeApp()
     window.show()
-    
+
     sys.exit(app.exec())
 
 
