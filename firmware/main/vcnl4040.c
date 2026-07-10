@@ -8,6 +8,7 @@
 
 #include "vcnl4040.h"
 #include "i2c_driver.h"
+#include "led.h"
 #include "esp_log.h"
 
 static const char *TAG = "vcnl4040";
@@ -23,8 +24,62 @@ static const char *TAG = "vcnl4040";
 
 #define VCNL4040_DEVICE_ID 0x0186
 
-// ALS_IT = 80 ms (ALS_CONF bits[7:6]=00) gives 0.1 lux per count.
-#define VCNL4040_LUX_PER_COUNT 0.1f
+// ALS_IT = 640 ms (ALS_CONF bits[7:6]=11) gives 0.0125 lux per count (finest resolution).
+#define VCNL4040_LUX_PER_COUNT 0.0125f
+
+// Calibration gain to compensate for enclosure-window attenuation. Measured against
+// a reference lux meter: sensor read 40.24 lux while reference read 94 lux -> 94/40.24.
+#define VCNL4040_LUX_CAL_GAIN 2.336f
+
+// LED spill into the ALS at fixed brightness steps (lux above LED-off baseline).
+// Measured with reference meter held constant: 0%=54, 25%=57, 50%=61, 75%=64, 100%=68 lx.
+typedef struct {
+    float pct;
+    float spill_lux;
+} lux_led_spill_point_t;
+
+static const lux_led_spill_point_t LUX_LED_SPILL_TABLE[] = {
+    {0.f, 0.f},
+    {25.f, 3.f},
+    {50.f, 7.f},
+    {75.f, 10.f},
+    {100.f, 14.f},
+};
+
+static float lux_led_spill_for_intensity_pct(float pct)
+{
+    const size_t count = sizeof(LUX_LED_SPILL_TABLE) / sizeof(LUX_LED_SPILL_TABLE[0]);
+
+    if (pct <= LUX_LED_SPILL_TABLE[0].pct) {
+        return LUX_LED_SPILL_TABLE[0].spill_lux;
+    }
+    if (pct >= LUX_LED_SPILL_TABLE[count - 1].pct) {
+        return LUX_LED_SPILL_TABLE[count - 1].spill_lux;
+    }
+
+    for (size_t i = 0; i < count - 1; i++) {
+        const lux_led_spill_point_t *lo = &LUX_LED_SPILL_TABLE[i];
+        const lux_led_spill_point_t *hi = &LUX_LED_SPILL_TABLE[i + 1];
+        if (pct >= lo->pct && pct <= hi->pct) {
+            float span = hi->pct - lo->pct;
+            float t = (pct - lo->pct) / span;
+            return lo->spill_lux + t * (hi->spill_lux - lo->spill_lux);
+        }
+    }
+
+    return 0.f;
+}
+
+static float lux_apply_led_compensation(float lux)
+{
+    if (led_get_color() == LED_COLOR_OFF) {
+        return lux;
+    }
+
+    float spill = lux_led_spill_for_intensity_pct(led_get_intensity() * 100.f);
+    lux -= spill;
+    return (lux < 0.f) ? 0.f : lux;
+}
 
 static bool vcnl4040_present = false;
 
@@ -58,7 +113,11 @@ bool vcnl4040_is_present(void)
 
 uint16_t vcnl4040_get_proximity(void)   { return vcnl4040_proximity; }
 uint16_t vcnl4040_get_ambient_raw(void) { return vcnl4040_ambient; }
-float    vcnl4040_get_lux(void)         { return (float)vcnl4040_ambient * VCNL4040_LUX_PER_COUNT; }
+float    vcnl4040_get_lux(void)
+{
+    float lux = (float)vcnl4040_ambient * VCNL4040_LUX_PER_COUNT * VCNL4040_LUX_CAL_GAIN;
+    return lux_apply_led_compensation(lux);
+}
 
 void vcnl4040_init(void)
 {
@@ -84,8 +143,8 @@ void vcnl4040_init(void)
         return;
     }
 
-    // Enable ALS: ALS_CONF = 0x0000 -> ALS_IT = 80 ms, ALS_SD = 0 (powered on).
-    ret = vcnl4040_write_reg(VCNL4040_REG_ALS_CONF, 0x0000);
+    // Enable ALS: ALS_CONF = 0x00C0 -> ALS_IT = 640 ms (bits[7:6]=11), ALS_SD = 0 (powered on).
+    ret = vcnl4040_write_reg(VCNL4040_REG_ALS_CONF, 0x00C0);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to configure ALS: %s", esp_err_to_name(ret));
         return;

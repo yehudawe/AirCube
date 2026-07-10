@@ -22,6 +22,6 @@ void vcnl4040_read(void);
 
 uint16_t vcnl4040_get_proximity(void);   // raw proximity counts (PS_DATA)
 uint16_t vcnl4040_get_ambient_raw(void); // raw ambient light counts (ALS_DATA)
-float    vcnl4040_get_lux(void);         // ambient light in lux (at 80ms IT)
+float    vcnl4040_get_lux(void);         // ambient light in lux (calibrated, LED-compensated)
 
 #endif // AIRCUBE_VCNL4040_H
