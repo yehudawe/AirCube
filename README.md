@@ -6,7 +6,7 @@
 
 **A round, glowy DIY air monitor — built from AliExpress parts and a weekend of printing.**
 
-AirCircle is a maker remix of [AirCube](https://github.com/StuckAtPrototype/AirCube) by [StuckAtPrototype](https://stuckatprototype.com). Same idea: one LED ring tells you how the air feels, and Zigbee feeds the numbers into Home Assistant. Different hardware: an ESP32-H2 SuperMini, off-the-shelf sensors, and a 3D-printed puck you can build yourself.
+AirCircle is a my remix of [AirCube](https://github.com/StuckAtPrototype/AirCube) by [StuckAtPrototype](https://stuckatprototype.com). Same idea: one LED ring tells you how the air feels, and Zigbee feeds the numbers into Home Assistant. Different hardware: an ESP32-H2 SuperMini, off-the-shelf sensors, and a 3D-printed puck you can build yourself.
 
 This is a **personal fork**, not the official AirCube. Think of it as the breadboard cousin of the real thing — a bit scrappier, still pretty handy on a desk.
 
