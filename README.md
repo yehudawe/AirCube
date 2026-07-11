@@ -46,6 +46,16 @@ Example AliExpress listings — double-check you pick the right variant:
 
 Plus a **USB data cable** for power and flashing.
 
+### Fasteners
+
+| Screw | Used for |
+|-------|----------|
+| **M3 × 4** | Sensor module → base |
+| **M3 × 6** | ESP32-H2 SuperMini → base |
+| **M2** (short, for plastic) | LED ring → base *(optional, if the fit is loose)* |
+
+The top cover fastens with screws at the printed mounting points on the base.
+
 ### 3D-printed parts
 
 Files live in [`mechanical/air-circle/`](mechanical/air-circle/):
@@ -73,9 +83,9 @@ Wrong ring size? Scale the STLs or tweak `air_circle.stp`.
 
 ---
 
-## Step 2 — Wire the hardware
+## Step 2 — Wire and solder
 
-All logic signals are **3.3 V**. Don't put 5 V on the sensor data lines or the LED data pin.
+Solder (or tightly twist-and-tape) the connections below before mounting anything in the enclosure. All logic signals are **3.3 V** — don't put 5 V on the sensor data lines or the LED data pin.
 
 | Module pin | Connect to ESP32-H2 SuperMini |
 |------------|-------------------------------|
@@ -104,9 +114,26 @@ Both ENS160 (`0x52`) and AHT21 (`0x38`) share the same I2C bus.
 
 Pins: [`firmware/main/board_config.h`](firmware/main/board_config.h)
 
+Double-check your joints, then trim any excess wire so nothing shorts once everything is packed inside the base.
+
 ---
 
-## Step 3 — Configure LED count
+## Step 3 — Assemble the enclosure
+
+With the wiring done, mount the parts into the printed base and close it up.
+
+1. **Sensor module** — place the ENS160 + AHT21 board on the base and secure it with an **M3 × 4** screw.
+2. **ESP32-H2 SuperMini** — set the board on the base (USB port accessible for flashing) and fasten it with an **M3 × 6** screw.
+3. **LED ring** — lay the WS2812 ring on top of the stack. A snug print should hold it by friction. If it feels loose, add **small M2 screws for plastic** through the ring into the base bosses.
+4. **Top cover** — align the translucent top and screw it onto the base.
+
+That's it — plug in USB, flash if you haven't already, and let it warm up.
+
+> **Tip:** Flash the firmware before screwing on the top cover — USB access and the boot button are much easier to reach.
+
+---
+
+## Step 4 — Configure LED count
 
 Set the LED count to match your ring before building.
 
@@ -120,7 +147,7 @@ Default is **30**; a 16-LED ring wants **16**.
 
 ---
 
-## Step 4 — Build and flash firmware
+## Step 5 — Build and flash firmware
 
 Requires [ESP-IDF v5.3+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32h2/get-started/).
 
@@ -144,7 +171,7 @@ Give it **~3 minutes** after first boot for the ENS160 to warm up — patience, 
 
 ---
 
-## Step 5 — View live readings (optional)
+## Step 6 — View live readings (optional)
 
 Plug in with a data-capable USB cable:
 

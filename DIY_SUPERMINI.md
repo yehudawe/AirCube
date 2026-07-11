@@ -14,7 +14,17 @@ Example AliExpress listings for a DIY build (not affiliated with StuckAtPrototyp
 
 You also need a USB cable for power/data and, for the **AirCircle** enclosure, the 3D-printed parts in `mechanical/air-circle/`.
 
-## Wiring
+### Fasteners
+
+| Screw | Used for |
+|-------|----------|
+| **M3 × 4** | Sensor module → base |
+| **M3 × 6** | ESP32-H2 SuperMini → base |
+| **M2** (short, for plastic) | LED ring → base *(optional)* |
+
+## Wiring and soldering
+
+Solder the connections below before mounting parts in the enclosure.
 
 | Module pin | Connect to ESP32-H2 SuperMini |
 |------------|-------------------------------|
@@ -29,6 +39,15 @@ You also need a USB cable for power/data and, for the **AirCircle** enclosure, t
 Both ENS160 (0x52) and AHT21 (0x38) share the same I2C bus.
 
 **Boot button (GPIO9):** short press cycles LED brightness; hold **3 seconds** for Zigbee pairing (blue flash).
+
+## Assembly
+
+1. **Sensor module** — mount on the base with an **M3 × 4** screw.
+2. **ESP32-H2 SuperMini** — place on the base and secure with an **M3 × 6** screw.
+3. **LED ring** — set on top. If the friction fit is loose, use **small M2 screws for plastic**.
+4. **Top cover** — screw onto the base. Done.
+
+Full step-by-step with printing and flashing: **[README.md](README.md)**.
 
 ## LED count
 
