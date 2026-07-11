@@ -1,237 +1,242 @@
-# AirCube
+# AirCircle — DIY AirCube Fork
 
-**See your air** AirCube is a desktop air quality monitor with built-in **Home Assistant** support over **Zigbee**. It tracks temperature, humidity, eCO2, TVOC, and VOC Level -- showing air quality as a single, glanceable LED color and reporting every reading to your smart home.
+**A maker remix of [AirCube](https://github.com/StuckAtPrototype/AirCube) by [StuckAtPrototype](https://stuckatprototype.com).**
 
-Works standalone out of the box. Pairs with Home Assistant in minutes. Other platforms are supported through **[community-contributed extensions](#community-extensions)**.
+This repository is a **personal fork**, not the official AirCube project. It adapts the open-source AirCube firmware for a low-cost DIY build using AliExpress parts, and adds a custom **AirCircle** 3D-printed enclosure.
 
-[Watch the demo](https://youtu.be/m12KpLyLCrw) (early build -- Home Assistant integration came after this video)
-
-[AirCube](https://stuckatprototype.com/products/aircube) -- Assembled AirCube
-
-[AirCube Populated PCB](https://stuckatprototype.com/products/aircube-populated-pcb) -- AirCube Populated PCB AirCube
-
----
-
-## Getting Started
-
-**1. Plug it in** -- Connect the USB-C cable to any USB port or charger. AirCube powers on automatically.
-
-**2. Wait for warm-up** -- The air quality sensor needs about 3 minutes to stabilize after power-on. During this time, the LED may not reflect accurate readings.
-
-**3. Read the color** -- Once warmed up, the LED tells you everything:
-
-| LED Color | Air Quality |
-|-----------|------------|
-| Green | Good |
-| Yellow | Moderate |
-| Orange | Poor |
-| Red | Bad -- consider ventilating |
-
-The color shifts smoothly as conditions change. No app needed -- just glance at it.
-
-> **Firmware 1.5.0 and above** drive the LED from **canonical VOC Level** (TVOC-derived, absolute). The color is a smooth green-to-red gradient -- same feel as older firmware, but tied to fixed indoor-air bands instead of the relative AQI-S baseline. See **[LED Reference](#led-reference)** for the exact mapping. Firmware **1.4.3 and below** used the same gradient shape, but driven by **AQI-S** instead.
-
-**4. Adjust brightness** -- Press the button to cycle through brightness levels.
-
-That's it. AirCube works out of the box with no setup, no accounts, and no Wi-Fi.
+| | |
+|---|---|
+| **Upstream project** | [StuckAtPrototype/AirCube](https://github.com/StuckAtPrototype/AirCube) |
+| **License** | [Apache 2.0](LICENSE) (same as upstream) |
+| **Detailed build notes** | [DIY_SUPERMINI.md](DIY_SUPERMINI.md) |
 
 ---
 
-## What AirCube Measures
+## What this fork adds
 
-| Measurement | Range | What It Tells You |
-|-------------|-------|------------------|
-| **VOC Level** | 0 -- 500 | TVOC-derived score against fixed indoor-air bands (firmware 1.5.0+; 0--500 scale in 1.5.1+) |
-| **AQI-S** (relative VOC Level, ScioSense) | 0 -- 500 | ENS161 relative score using the past 24 h as a baseline (**USB serial only**) |
-| **eCO2** (equivalent CO2) | 400 -- 65,000 ppm | Estimated CO2 level derived from detected VOCs |
-| **eTVOC** (equivalent Total VOC) | 0 -- 65,000 ppb | Total volatile organic compound concentration |
-| **Temperature** | | Room temperature in Celsius |
-| **Humidity** | 0 -- 100 % | Relative humidity percentage |
+- **AirCircle enclosure** — custom round case (`mechanical/air-circle/`)
+- **ESP32-H2 SuperMini** pin mapping via `firmware/main/board_config.h`
+- **ENS160 + AHT21** sensor support (instead of the official ENS161 + ENS210)
+- **External WS2812 LED ring** on GPIO4 (instead of the onboard PCB LED)
+- **DIY build guide** — sourcing, printing, wiring, and flashing
 
-### Understanding the readings
+Firmware still provides air-quality monitoring with a color LED ring, USB serial readings, and **Zigbee / Home Assistant** support from the original AirCube project.
 
-AirCube uses a **ScioSense ENS161** gas sensor and an **ENS210** temperature/humidity sensor. The ENS210 compensates the ENS161; the firmware reads finished values over I2C.
-
-**eCO2 (ppm)** -- Estimated CO2 derived from detected VOCs, not a direct CO2 measurement. Useful for judging ventilation; also picks up odors and fumes a pure CO2 sensor would miss.
-
-**eTVOC (ppb)** -- Total volatile organic compounds in the air. Spikes after cooking or cleaning are normal; sustained high readings mean you should ventilate.
-
-**VOC Level (0--500)** -- TVOC mapped to a fixed indoor-air scale (firmware 1.5.1+). Linear ramp between band edges; TVOC-only (eCO2 does not affect VOC Level). Reported over Zigbee and USB serial.
-
-| Rating | LED color | VOC Level | TVOC (ppb) |
-|--------|-----------|-----|------------|
-| Excellent | Green | 0 -- 15 | 0 -- 65 |
-| Good | Green → lime | 15 -- 50 | 65 -- 220 |
-| Moderate | Lime → yellow | 50 -- 100 | 220 -- 650 |
-| Poor | Yellow → orange → red | 100 -- 200 | 650 -- 2,200 |
-| Unhealthy | Red | 200 -- 500 | 2,200 -- 5,500 |
-
-The LED color is derived from TVOC/VOC Level alone (eCO2 does not drive the LED). VOC Level is linear between band edges, so the LED fades smoothly.
-
-**AQI-S (0--500, USB serial only)** -- ScioSense relative score vs. the past 24 hours (**100** = average). Below 100 is better than recent history; above 100 is worse. Not an absolute clean/dirty reading -- use VOC Level, eCO2, or eTVOC for that.
-
-Only **VOC Level** drives the LED color. See **[LED Reference](#led-reference)**.
-
-### Warm-up and initial start-up
-
-The ENS161 needs about **3 minutes** of warm-up in standard mode before readings stabilize. On the very first power-on of a new sensor the initial start-up takes about **1 hour** as the sensor conditions itself. Readings during these periods may be inaccurate -- the LED and status flag will indicate when the sensor is ready.
+> **Not affiliated with or endorsed by StuckAtPrototype.**
 
 ---
 
-## Built-in vs. community
+## What you need
 
-**Maintained by StuckAtPrototype:** firmware, hardware, desktop app, and the **Home Assistant** integration documented in **[HOME_ASSISTANT.md](HOME_ASSISTANT.md)**.
+### Electronics
 
-**Community-contributed:** integrations built and shared by the community. They live in this repo and are welcome, but StuckAtPrototype does not test or ship them. They may require extra setup and can break when a vendor updates their platform. See **[Community extensions](#community-extensions)**.
+Example AliExpress listings (verify the correct variant before ordering):
 
----
+| Part | Notes | Link |
+|------|-------|------|
+| **ESP32-H2 SuperMini** | Must be the **H2** variant (Zigbee-capable) | [AliExpress](https://a.aliexpress.com/_c4Pyot8F) |
+| **ENS160 + AHT21 module** | Combined gas + temperature/humidity sensor | [AliExpress](https://a.aliexpress.com/_c32NbwfH) |
+| **WS2812 RGB LED ring** | Match LED count to your ring (e.g. 16-LED) | [AliExpress](https://a.aliexpress.com/_c4Vc3oaj) |
 
-## Home Assistant Integration
+You also need a **USB data cable** for power and flashing.
 
-AirCube was designed for Home Assistant. It connects over **Zigbee** -- no USB cable to your server, no cloud, no Wi-Fi credentials to configure. Plug it in, pair it, and six entities show up automatically: temperature, humidity, eCO2, tVOC, VOC Level, and brightness.
+### 3D-printed parts
 
-Once connected you can:
-- **Track air quality over time** with built-in history graphs
-- **Set up automations** -- turn on a fan when eCO2 gets too high, send a notification when VOC Level spikes
-- **Monitor every room** -- each AirCube pairs independently, name them however you like
+Print files are in [`mechanical/air-circle/`](mechanical/air-circle/):
 
-**You'll need:** a Zigbee coordinator dongle (we recommend the [SONOFF ZBDongle-E](https://sonoff.tech/product/gateway-and-sensors/sonoff-zigbee-3-0-usb-dongle-plus-e/), ~$13) plugged into your Home Assistant machine.
+| File | Purpose |
+|------|---------|
+| `air_circ_base.stl` | Bottom shell |
+| `air_circ_top.stl` | Translucent top cover |
+| `air_circ_lock.stl` | Retention / lock piece |
+| `air_circle.stp` | Full assembly source (CAD edits) |
 
-**Works with** ZHA (built-in) and Zigbee2MQTT.
-
-**Full setup guide:** **[Connecting AirCube to Home Assistant](HOME_ASSISTANT.md)**
-
----
-
-## Community extensions
-
-The integrations below are **community-contributed**. They are not maintained by StuckAtPrototype and compatibility with vendor hub or app updates is not guaranteed.
-
-### SmartThings (Samsung Zigbee hub) — community-contributed
-
-Some users run AirCube on a **Samsung SmartThings** Zigbee hub over **Zigbee** (no Wi-Fi configuration on the device). The hub must support **SmartThings Edge**.
-
-By default, the SmartThings app may only show **temperature** and **humidity** until you install the community **AirCube Zigbee** Edge driver from this repository and assign it to the device.
-
-**Full setup guide:** **[Connecting AirCube to SmartThings](SMARTTHINGS.md)** (pairing, SmartThings CLI, driver channel, verification in the app and [Advanced Web App](https://my.smartthings.com/advanced)).
-
-**Troubleshooting:** If you only see temperature and humidity, install the **AirCube Zigbee** Edge driver from [`smartthings/aircube-zigbee/`](smartthings/aircube-zigbee/) and assign it to the device. Details are in **[SMARTTHINGS.md](SMARTTHINGS.md)**.
+Original StuckAtPrototype enclosure files are preserved in [`mechanical/original/`](mechanical/original/) for reference only.
 
 ---
 
-## Connect to Your Computer
+## Step 1 — Print the enclosure
 
-Plug the AirCube into your computer with a **data-capable USB-C cable** to see live readings, charts, and history.
+1. Slice the three STL files in your preferred slicer (Bambu Studio, PrusaSlicer, Cura, etc.).
+2. **Material:** PLA or PETG both work. PETG is more heat-tolerant near the electronics.
+3. **Top cover:** use a **translucent / natural** filament so the LED ring glows through.
+4. **Orientation:** print flat on the bed, largest face down. Add supports only if your slicer flags overhangs that need them.
+5. After printing, dry-fit base + top + lock before wiring. Sand or trim only if parts bind.
 
-### Download the app
+If your LED ring is a different diameter, you may need to scale the STLs or edit `air_circle.stp`.
 
-Check the [Releases](https://github.com/StuckAtPrototype/AirCube/releases) page for a ready-to-run Windows `.exe` -- no install required.
+---
 
-### Or run from source
+## Step 2 — Wire the hardware
+
+All logic signals are **3.3 V**. Do not apply 5 V to the sensor data lines or LED data pin.
+
+| Module pin | Connect to ESP32-H2 SuperMini |
+|------------|-------------------------------|
+| SDA | **GPIO1** (IO1) |
+| SCL | **GPIO0** (IO0) |
+| VCC | **3V3** |
+| GND | **GND** |
+| LED DIN | **GPIO4** (IO4) |
+| LED +5V | **5V** (USB) — only if your ring needs 5 V power |
+| LED GND | **GND** |
+
+Both ENS160 (`0x52`) and AHT21 (`0x38`) share the same I2C bus.
+
+**Button (GPIO9):** the SuperMini boot button is used by the firmware — short press cycles brightness, hold **3 seconds** for Zigbee pairing (blue flash).
 
 ```
-git clone https://github.com/StuckAtPrototype/AirCube.git
-cd AirCube/scripts
+  ENS160+AHT21          ESP32-H2 SuperMini          WS2812 ring
+  ─────────────         ──────────────────          ───────────
+  SDA  ───────────────► GPIO1
+  SCL  ───────────────► GPIO0
+  VCC  ───────────────► 3V3
+  GND  ───────────────► GND ────────────────────► GND
+                        GPIO4 ──────────────────► DIN
+                        5V (optional) ──────────► +5V
+```
+
+Pin definitions: [`firmware/main/board_config.h`](firmware/main/board_config.h)
+
+---
+
+## Step 3 — Configure LED count
+
+Before building firmware, set the number of LEDs to match your ring.
+
+Edit [`firmware/main/ws2812_control.h`](firmware/main/ws2812_control.h):
+
+```c
+#define NUM_LEDS  16   // change to match your WS2812 ring or strip
+```
+
+Default in this fork is **30**; a typical 16-LED ring should use **16**.
+
+---
+
+## Step 4 — Build and flash firmware
+
+Requires [ESP-IDF v5.3+](https://docs.espressif.com/projects/esp-idf/en/latest/esp32h2/get-started/).
+
+```powershell
+cd firmware
+idf.py set-target esp32h2
+idf.py build
+idf.py -p COM9 flash monitor
+```
+
+Replace `COM9` with your board's serial port (`COM*` on Windows, `/dev/tty*` on Linux).
+
+On first boot, allow **~3 minutes** for the ENS160 to warm up before readings stabilize.
+
+### Button controls
+
+| Action | Result |
+|--------|--------|
+| Short press | Cycle LED brightness (off → 10% → 30% → 60% → 100%) |
+| Hold 3 seconds | Enter Zigbee pairing mode (blue flash) |
+
+---
+
+## Step 5 — View live readings (optional)
+
+Plug the SuperMini into your PC with a data-capable USB cable:
+
+```powershell
+cd scripts
 pip install -r requirements.txt
 python aircube_app.py
 ```
 
-Select your serial port, click **Connect**, and you'll see live data.
-
-> **Tip:** Prefer a minimal taskbar-only view? See the companion [**AirCube Tray**](https://github.com/StuckAtPrototype/AirCubeTray) repo -- a lightweight Windows system-tray app that shows VOC Level as a live, color-coded number in your taskbar. It ships its own installer.
+Select your COM port and click **Connect**. Temperature, humidity, eCO2, TVOC, and VOC Level appear after warm-up.
 
 ---
 
-## Firmware Updates
+## Home Assistant (optional)
 
-New firmware releases add features and fix bugs. Updating takes a couple of minutes with just a browser -- no tools to install.
+This fork inherits AirCube's **Zigbee** integration. Pair the device with ZHA or Zigbee2MQTT using the upstream guide:
 
-**[Firmware Update Guide](FIRMWARE_UPDATE.md)** -- step-by-step instructions.
+**[HOME_ASSISTANT.md](HOME_ASSISTANT.md)**
 
-Latest release: [GitHub Releases](https://github.com/StuckAtPrototype/AirCube/releases)
+Hold the boot button for 3 seconds to enter pairing mode, then enable permit join on your coordinator.
 
 ---
 
-## LED Reference
+## Differences from official AirCube
 
-### Firmware 1.5.0 and above (current)
+| | Official AirCube | This fork (AirCircle) |
+|---|---|---|
+| Board | Custom PCB | ESP32-H2 SuperMini |
+| Gas sensor | ENS161 | ENS160 |
+| Temp/humidity | ENS210 | AHT21 |
+| LED | Onboard WS2812 | External WS2812 ring on GPIO4 |
+| Enclosure | StuckAtPrototype design | AirCircle 3D-printed case |
+| BLE BTHome | Supported | Disabled in this fork's defaults |
+| AQI-S score | Available over USB serial | Not available (`-1` on ENS160) |
 
-The LED is a continuous green-to-red gradient driven by **canonical VOC Level** (TVOC-derived). The hue moves linearly with VOC Level: pure green up to VOC Level 10, then fading green → lime → yellow → orange → red, reaching full red at VOC Level 200. eCO2 does **not** affect the LED.
+For the commercial product, documentation, and official firmware releases, see **[StuckAtPrototype/AirCube](https://github.com/StuckAtPrototype/AirCube)**.
 
-```mermaid
-flowchart LR
-    A["VOC Level 0–10<br/>TVOC 0–~43 ppb"] --> G["Steady green"]
-    B["VOC Level 10–200<br/>TVOC ~43–2 200 ppb"] --> GR["Green → lime → yellow → orange → red"]
-    C["VOC Level 200+<br/>TVOC 2 200+ ppb"] --> R["Steady red"]
-```
+---
 
-| LED color | VOC Level | TVOC (ppb) | Rating |
-|-----------|-----|------------|--------|
-| Steady green | 0 -- 10 | 0 -- ~43 | Excellent |
-| Green → lime | 10 -- 50 | ~43 -- 220 | Good |
-| Lime → yellow | 50 -- 100 | 220 -- 650 | Moderate |
-| Yellow → orange → red | 100 -- 200 | 650 -- 2 200 | Poor |
-| Steady red | 200+ | 2 200+ | Unhealthy |
-| Flashing blue | -- | -- | Zigbee pairing mode |
+## LED color reference
 
-Key gradient landmarks: **yellow** around VOC Level 105 (~730 ppb) and **orange** around VOC Level 150 (~1,460 ppb). Over **Zigbee**, TVOC-derived VOC Level is reported alongside eCO2, eTVOC, temperature, humidity, and brightness. **AQI-S** is available over **USB serial** only and does not drive the LED.
+The LED ring shows air quality as a smooth green-to-red gradient driven by **VOC Level** (TVOC-derived):
 
-### Firmware 1.4.3 and below (legacy)
-
-Same gradient shape as above, but driven by **AQI-S** (relative, 24-hour baseline) instead of canonical VOC Level:
-
-| LED | Meaning |
-|-----|---------|
-| Steady green | Good air quality (AQI-S 0--10) |
-| Yellow through red | Degrading to poor air quality (AQI-S 10--200) |
-| Steady red | Poor air quality (AQI-S 200+) |
+| LED color | Air quality |
+|-----------|-------------|
+| Green | Good |
+| Yellow | Moderate |
+| Orange | Poor |
+| Red | Bad — consider ventilating |
 | Flashing blue | Zigbee pairing mode |
 
-### Button
-
-| Action | What It Does |
-|--------|-------------|
-| Short press | Cycle brightness (off, 10%, 30%, 60%, 100%) |
-| Hold 3 seconds | Enter Zigbee pairing mode |
+Full band tables and legacy firmware notes are in the [upstream README](https://github.com/StuckAtPrototype/AirCube/blob/master/README.md#led-reference).
 
 ---
 
 ## Troubleshooting
 
-**LED doesn't turn on**
-- Make sure the USB-C cable is firmly connected and the power source is active.
-- Try a different USB port or charger.
+**No serial port detected**
+- Use a USB cable that supports data, not charge-only.
+- Install [Silicon Labs USB-UART drivers](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers) on Windows if needed.
 
-**Readings seem wrong right after power-on**
-- Normal. The air quality sensor needs about 3 minutes to warm up. Readings will stabilize.
+**Readings wrong right after power-on**
+- Normal. Allow ~3 minutes for the ENS160 to warm up.
 
-**Computer doesn't detect AirCube**
-- Some USB cables are charge-only. Use a cable that supports data.
-- Windows users may need to install [USB drivers](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers).
-- Linux users: add yourself to the `dialout` group and re-login.
+**LED ring wrong colors or partial ring**
+- Check `NUM_LEDS` matches your physical ring.
+- Confirm DIN is on **GPIO4** and GND is shared.
 
+**Zigbee won't pair**
+- Hold boot button 3 seconds (blue flash).
+- Enable permit join in ZHA or Zigbee2MQTT.
+- Move the device closer to the coordinator.
 
-**Home Assistant: eCO2, TVOC, or VOC Level sensors are missing**
-- The custom quirk or converter isn't loaded yet. See the [Home Assistant guide](HOME_ASSISTANT.md) for step-by-step instructions.
-
-**Home Assistant: AirCube won't pair**
-- Make sure permit join is enabled in ZHA or Zigbee2MQTT.
-- Hold the button for 3 seconds to enter pairing mode (LED flashes blue).
-- Move AirCube closer to the coordinator during pairing.
+**Home Assistant missing sensors**
+- Load the custom ZHA quirk or Zigbee2MQTT converter — see [HOME_ASSISTANT.md](HOME_ASSISTANT.md).
 
 ---
 
-## Open Source
+## Repository layout
 
-AirCube is fully open source -- firmware, PCB design, enclosure, desktop software, and Home Assistant integration. Community-contributed integrations (see **[Community extensions](#community-extensions)**) also live in this repository. Everything is under the Apache 2.0 license.
+```
+AirCube/
+├── mechanical/
+│   ├── air-circle/          # AirCircle enclosure (STL + STEP)
+│   └── original/            # Upstream reference enclosure files
+├── firmware/                # Adapted ESP-IDF firmware
+│   └── main/
+│       ├── board_config.h   # SuperMini pin map
+│       └── ws2812_control.h # LED count (NUM_LEDS)
+├── scripts/                 # Desktop app for USB serial
+├── DIY_SUPERMINI.md         # Supplementary build notes
+└── HOME_ASSISTANT.md        # Zigbee setup (from upstream)
+```
 
-**Developers and makers:** See the **[Contributing Guide](CONTRIBUTING.md)** for build instructions, architecture docs, serial protocol reference, and how to submit changes.
+---
 
-| | |
-|---|---|
-| [Contributing Guide](CONTRIBUTING.md) | Build from source, firmware architecture, serial protocol, how to contribute |
-| [Firmware Update Guide](FIRMWARE_UPDATE.md) | Update your AirCube firmware from a browser |
-| [Home Assistant Guide](HOME_ASSISTANT.md) | ZHA and Zigbee2MQTT setup |
-| [Samsung hub integration](SMARTTHINGS.md) | Community-contributed: Edge driver, CLI setup (see **[Community extensions](#community-extensions)**) |
-| [GitHub Issues](https://github.com/StuckAtPrototype/AirCube/issues) | Bug reports and feature requests |
-| [License](LICENSE) | Apache 2.0 |
+## License and attribution
+
+Based on [AirCube](https://github.com/StuckAtPrototype/AirCube) by StuckAtPrototype, licensed under [Apache 2.0](LICENSE).
+
+AirCircle mechanical files and SuperMini adaptations in this fork are shared under the same license. When redistributing, keep the license and credit the original project.
