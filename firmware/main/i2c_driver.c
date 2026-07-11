@@ -8,8 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define I2C_MASTER_SCL_IO           0      /*!< GPIO number used for I2C master clock */
-#define I2C_MASTER_SDA_IO           1      /*!< GPIO number used for I2C master data  */
+#include "board_config.h"
 #define I2C_MASTER_NUM              0      /*!< I2C master i2c port number */
 #define I2C_MASTER_FREQ_HZ          100000 /*!< I2C master clock frequency */
 #define I2C_MASTER_TIMEOUT_MS       1000
@@ -119,6 +118,21 @@ esp_err_t i2c_driver_read(uint8_t device_addr, const uint8_t *reg_addr, size_t r
 
     // Transmit register address and receive data
     return i2c_master_transmit_receive(dev_handle, reg_addr, reg_len, data, data_len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+}
+
+esp_err_t i2c_driver_receive(uint8_t device_addr, uint8_t *data, size_t data_len)
+{
+    if (!i2c_initialized || i2c_bus_handle == NULL) {
+        ESP_LOGE(TAG, "I2C driver not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    i2c_master_dev_handle_t dev_handle = get_device_handle(device_addr);
+    if (dev_handle == NULL) {
+        return ESP_FAIL;
+    }
+
+    return i2c_master_receive(dev_handle, data, data_len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 }
 
 void i2c_driver_deinit(void)

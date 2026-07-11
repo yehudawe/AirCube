@@ -267,11 +267,7 @@ void sensor_task(void *pvParameters)
         float humidity = ens210_get_humidity();
         uint8_t ens210_status = ens210_get_status();
 
-        // we know that the temperature has a 2 degree offset from the real temperature
-        // subtract 2 degrees from the temperature to get the real temperature
-        temp_c -= 2;
-        
-        // Write ENS210 data to ENS161 for environmental compensation
+        // Write AHT21 compensation data to ENS160
         uint8_t ens210_t[2];
         uint8_t ens210_h[2];
         ens210_get_envir(ens210_t, ens210_h);
@@ -312,7 +308,7 @@ void sensor_task(void *pvParameters)
         
         // Display all sensor data with status
         ESP_LOGI(TAG, "=== Sensor Data ===");
-        ESP_LOGI(TAG, "ENS210 - Status: 0x%02X, Temperature: %.2f°C, Humidity: %.2f%%", 
+        ESP_LOGI(TAG, "ENS210 - Status: 0x%02X, Temperature: %.2f°C, Humidity: %.2f%%",
                  ens210_status, temp_c, humidity);
         ESP_LOGI(TAG, "ENS16X - Status: %s, eTVOC: %d ppb, eCO2: %d ppm, VOC Level: %d, AQI-S: %d, AQI-UBA: %d",
                  ens16x_status_str, etvoc, eco2, aqi, aqi_s, aqi_uba);
@@ -412,13 +408,13 @@ void app_main(void)
     // Initialize button for brightness control
     button_init();
     
-    // Initialize ENS210 temperature and humidity sensor
+    // Initialize AHT21 temperature and humidity sensor (ENS210 API)
     ens210_init();
-    ESP_LOGI(TAG, "ENS210 initialized");
+    ESP_LOGI(TAG, "AHT21 initialized");
     
-    // Initialize ENS16X air quality sensor
+    // Initialize ENS160 air quality sensor (ENS16X driver)
     ens16x_init();
-    ESP_LOGI(TAG, "ENS16X initialized");
+    ESP_LOGI(TAG, "ENS160 initialized");
     
     // Initialize Zigbee stack (End Device, idles until long-press on first boot)
     zigbee_init();

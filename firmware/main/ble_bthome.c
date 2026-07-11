@@ -1,28 +1,12 @@
 /**
  * @file ble_bthome.c
- * @brief BLE BTHome v2 broadcaster for AirCube
- *
- * Builds a non-connectable BLE advertisement in BTHome v2 format and
- * updates it whenever sensor_task calls ble_bthome_update(). Home
- * Assistant's Bluetooth integration auto-discovers the device through
- * any nearby Bluetooth proxy.
- *
- * BTHome v2 spec: https://bthome.io/format/
- *
- * Advertisement layout:
- *   AD[0] Flags (0x01)            : 0x06
- *   AD[1] Service Data (0x16)     : UUID 0xFCD2 + device info + objects
- *   Scan Response: Complete Local Name (0x09) : "AirCube"
- *
- * BTHome service data payload (object IDs must be in ascending order):
- *   0x40            device info byte (no encryption, v2)
- *   0x02  sint16    temperature * 100 (°C)
- *   0x03  uint16    humidity    * 100 (%)
- *   0x12  uint16    eCO2 (ppm)
- *   0x13  uint16    eTVOC (ppb — BTHome labels unit as µg/m³)
+ * @brief BLE BTHome v2 broadcaster for AirCube (optional — disabled on DIY builds)
  */
 
 #include "ble_bthome.h"
+#include "sdkconfig.h"
+
+#if CONFIG_BT_ENABLED
 
 #include <string.h>
 #include "esp_log.h"
@@ -33,40 +17,30 @@
 
 static const char *TAG = "ble_bthome";
 
-// BTHome v2 service UUID: 0xFCD2
 #define BTHOME_UUID_LSB     0xD2
 #define BTHOME_UUID_MSB     0xFC
-// Device info: no encryption (bit 0 = 0), BTHome version 2 (bits 7:5 = 010)
 #define BTHOME_DEVICE_INFO  0x40
 
-// Object IDs — must appear in ascending order in the payload
-#define BTHOME_OBJ_TEMPERATURE  0x02  // sint16 * 0.01 °C
-#define BTHOME_OBJ_HUMIDITY     0x03  // uint16 * 0.01 %
-#define BTHOME_OBJ_CO2          0x12  // uint16 ppm
-#define BTHOME_OBJ_TVOC         0x13  // uint16 µg/m³ (we send ppb)
+#define BTHOME_OBJ_TEMPERATURE  0x02
+#define BTHOME_OBJ_HUMIDITY     0x03
+#define BTHOME_OBJ_CO2          0x12
+#define BTHOME_OBJ_TVOC         0x13
 
 static volatile bool     s_ble_ready  = false;
-static volatile int16_t  s_temp_x100  = 2000;  // 20.00 °C until first update
-static volatile uint16_t s_hum_x100   = 5000;  // 50.00 %
+static volatile int16_t  s_temp_x100  = 2000;
+static volatile uint16_t s_hum_x100   = 5000;
 static volatile uint16_t s_co2        = 0;
 static volatile uint16_t s_tvoc       = 0;
 
-// ---------------------------------------------------------------------------
-// Advertising helpers
-// ---------------------------------------------------------------------------
-
 static void do_advertise(void)
 {
-    // ── Build advertisement payload ──────────────────────────────────────
     uint8_t adv[31];
     int pos = 0;
 
-    // AD: Flags
     adv[pos++] = 2;
     adv[pos++] = 0x01;
-    adv[pos++] = 0x06;  // LE General Discoverable | BR/EDR Not Supported
+    adv[pos++] = 0x06;
 
-    // BTHome v2 service data (UUID + device info + objects)
     uint8_t svc[20];
     int sp = 0;
     svc[sp++] = BTHOME_UUID_LSB;
@@ -90,8 +64,7 @@ static void do_advertise(void)
     svc[sp++] = (uint8_t)(s_tvoc & 0xFF);
     svc[sp++] = (uint8_t)(s_tvoc >> 8);
 
-    // AD: Service Data - 16-bit UUID (type 0x16)
-    adv[pos++] = sp + 1;  // length = payload bytes + type byte
+    adv[pos++] = sp + 1;
     adv[pos++] = 0x16;
     memcpy(adv + pos, svc, sp);
     pos += sp;
@@ -102,22 +75,19 @@ static void do_advertise(void)
         return;
     }
 
-    // ── Scan response: device name ───────────────────────────────────────
     uint8_t rsp[31];
     int rp = 0;
     const char *name = "AirCube";
     uint8_t nlen = (uint8_t)strlen(name);
     rsp[rp++] = nlen + 1;
-    rsp[rp++] = 0x09;  // Complete Local Name
+    rsp[rp++] = 0x09;
     memcpy(rsp + rp, name, nlen);
     rp += nlen;
     ble_gap_adv_rsp_set_data(rsp, rp);
 
-    // ── Start non-connectable advertising ────────────────────────────────
     struct ble_gap_adv_params params = {0};
     params.conn_mode = BLE_GAP_CONN_MODE_NON;
     params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-    // 500 – 1000 ms interval: low enough for HA discovery, friendly to Zigbee coex
     params.itvl_min  = BLE_GAP_ADV_ITVL_MS(500);
     params.itvl_max  = BLE_GAP_ADV_ITVL_MS(1000);
 
@@ -127,10 +97,6 @@ static void do_advertise(void)
         ESP_LOGE(TAG, "ble_gap_adv_start failed: %d", rc);
     }
 }
-
-// ---------------------------------------------------------------------------
-// NimBLE host callbacks
-// ---------------------------------------------------------------------------
 
 static void on_sync(void)
 {
@@ -145,16 +111,11 @@ static void on_reset(int reason)
     ESP_LOGW(TAG, "BLE host reset (reason %d)", reason);
 }
 
-// NimBLE host task — runs nimble_port_run() which never returns normally
 static void ble_host_task(void *param)
 {
     nimble_port_run();
     nimble_port_freertos_deinit();
 }
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 void ble_bthome_init(void)
 {
@@ -187,3 +148,19 @@ void ble_bthome_update(float temp_c, float humidity, int eco2, int etvoc)
     }
     do_advertise();
 }
+
+#else
+
+void ble_bthome_init(void)
+{
+}
+
+void ble_bthome_update(float temp_c, float humidity, int eco2, int etvoc)
+{
+    (void)temp_c;
+    (void)humidity;
+    (void)eco2;
+    (void)etvoc;
+}
+
+#endif

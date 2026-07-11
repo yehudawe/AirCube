@@ -27,20 +27,12 @@ CONFIG_ZB_RADIO_NATIVE=y
 CONFIG_AIRCUBE_ZB_TX_POWER_DBM=20
 
 #
-# Bluetooth — NimBLE broadcaster for BTHome v2 (firmware/main/ble_bthome.c)
+# Bluetooth disabled for DIY SuperMini builds (avoids NimBLE build issues;
+# USB serial + Zigbee still work). Re-enable for official AirCube hardware.
 #
-CONFIG_BT_ENABLED=y
-CONFIG_BT_NIMBLE_ENABLED=y
-# Non-connectable broadcast only; disable unused roles to save flash/RAM
-# CONFIG_BT_NIMBLE_ROLE_CENTRAL is not set
-# CONFIG_BT_NIMBLE_ROLE_OBSERVER is not set
-# CONFIG_BT_NIMBLE_ROLE_PERIPHERAL is not set
-CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
-# Disable extended advertising controller; legacy advertising is used instead
-CONFIG_BT_NIMBLE_MAX_EXT_ADV_INSTANCES=0
+# CONFIG_BT_ENABLED is not set
 
 #
-# Radio coexistence — Zigbee (802.15.4) + BLE share the 2.4 GHz radio.
-# Without this the two stacks will conflict.
+# Radio coexistence — only needed when both Zigbee and BLE are active.
 #
-CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+# CONFIG_ESP_COEX_SW_COEXIST_ENABLE is not set

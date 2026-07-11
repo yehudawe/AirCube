@@ -23,8 +23,7 @@
 
 static const char *TAG = "button";
 
-// Button GPIO configuration
-#define BUTTON_GPIO 11
+#include "board_config.h"
 
 // Debounce timing (in milliseconds)
 #define DEBOUNCE_MS 50

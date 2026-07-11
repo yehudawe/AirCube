@@ -15,8 +15,10 @@
 #include "freertos/semphr.h"
 #include "led_color_lib.h"
 
-// Number of LEDs to control (using first 3 LEDs)
-#define NUM_CONTROLLED_LEDS 3
+#include "board_config.h"
+
+// All strip pixels show the same air-quality color
+#define NUM_CONTROLLED_LEDS NUM_LEDS
 
 // Mutex to protect LED color and intensity updates
 static SemaphoreHandle_t led_mutex = NULL;

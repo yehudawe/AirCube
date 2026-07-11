@@ -18,7 +18,7 @@
 #include "esp_err.h"
 
 // Hardware configuration
-#define NUM_LEDS	5    // Number of WS2812 LEDs in the strip
+#define NUM_LEDS	30   // WS2812 pixels on your strip (change if different)
 
 #ifdef __cplusplus
 extern "C" {

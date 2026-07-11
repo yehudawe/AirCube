@@ -25,6 +25,9 @@ esp_err_t i2c_driver_write(uint8_t device_addr, const uint8_t *data, size_t len)
 // data_len: number of bytes to read
 esp_err_t i2c_driver_read(uint8_t device_addr, const uint8_t *reg_addr, size_t reg_len, uint8_t *data, size_t data_len);
 
+// Read bytes without writing a register first (e.g. AHT21 measurement payload)
+esp_err_t i2c_driver_receive(uint8_t device_addr, uint8_t *data, size_t data_len);
+
 // Deinitialize I2C bus
 void i2c_driver_deinit(void);
 

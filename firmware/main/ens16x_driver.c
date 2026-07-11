@@ -5,6 +5,7 @@
 #include "ens16x_driver.h"
 #include "i2c_driver.h"
 #include <string.h>
+#include <stdbool.h>
 #include "esp_log.h"
 
 #define ENS16X_I2C_ADDRESS 0x52
@@ -20,6 +21,12 @@
 #define ENS16X_REG_RH_IN 0x15
 #define ENS16X_REG_TH_IN 0x13
 
+#define ENS16X_REG_DATA_AQI_S 0x26
+
+#define ENS16X_PART_ID_REG 0x00
+#define ENS16X_PART_ID_ENS160 0x0160
+#define ENS16X_PART_ID_ENS161 0x0161
+
 enum ENS_OPMODE ens16x_op_mode = ENS_RESERVED;
 enum ENS_STATUS ens16x_status = ENS_RESET;
 uint8_t ens16x_new_data_available = 0;
@@ -28,6 +35,7 @@ int ens16x_tvoc = -1;
 int ens16x_eco2 = -1;
 int ens16x_aqi = -1;
 int ens16x_aqi_uba = -1;
+static bool ens16x_is_ens161 = false;
 
 
 enum ENS_OPMODE ens16x_get_opmode(void);
@@ -115,6 +123,11 @@ int ens16x_read_eco2(void){
 }
 
 int ens16x_read_aqi(void){
+    if (!ens16x_is_ens161) {
+        ens16x_aqi = -1;
+        return -1;
+    }
+
     uint8_t i2c_data[2];
     memset(i2c_data, 0, 2);
     uint8_t i2c_byte_address[] = {ENS16X_REG_DATA_AQI_S};
@@ -213,10 +226,11 @@ void ens16x_init(void){
     uint8_t i2c_byte_address[] = {0};
 
     i2c_driver_read(ENS16X_I2C_ADDRESS, i2c_byte_address, 1, i2c_data, 2);
+    uint16_t part_id = ((uint16_t)i2c_data[0] | (uint16_t)i2c_data[1] << 8);
 
-    for(int i = 0; i < 2; i++){
-        ESP_LOGD("ens160", "i2c_data[%i]: %x", i, i2c_data[i]);
-    }
+    ens16x_is_ens161 = (part_id == ENS16X_PART_ID_ENS161);
+    ESP_LOGI("ens16x", "part ID: 0x%04X (%s)", part_id,
+             ens16x_is_ens161 ? "ENS161" : "ENS160");
 
     // gets and sets the local global variables
     ens16x_get_device_status();

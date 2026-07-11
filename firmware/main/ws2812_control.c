@@ -18,7 +18,7 @@
 #include "esp_log.h"
 
 // Hardware configuration
-#define LED_RMT_TX_GPIO         25  // GPIO pin for LED data output
+#include "board_config.h"
 #define BITS_PER_LED_CMD        24  // 24 bits per LED (8 bits each for R, G, B)
 #define LED_BUFFER_ITEMS        (NUM_LEDS * BITS_PER_LED_CMD)
 
