@@ -51,7 +51,7 @@ Plus a **USB data cable** for power and flashing.
 | Screw | Used for |
 |-------|----------|
 | **M3 × 4** | Sensor module → base |
-| **M3 × 6** | ESP32-H2 SuperMini → base |
+| **M3 × 6** | ESP32-H2 SuperMini → base (via tab) |
 | **M2** (short, for plastic) | LED ring → base *(optional, if the fit is loose)* |
 
 The top cover fastens with screws at the printed mounting points on the base.
@@ -64,7 +64,7 @@ Files live in [`mechanical/air-circle/`](mechanical/air-circle/):
 |------|---------|
 | `air_circ_base.stl` | Bottom shell |
 | `air_circ_top.stl` | Translucent top cover — this is what makes the glow |
-| `air_circ_lock.stl` | Retention / lock piece |
+| `air_circ_lock.stl` | Tab — supports the ESP32-H2 in the base |
 | `air_circle.stp` | Full assembly source (CAD edits) |
 
 Original StuckAtPrototype enclosure files are in [`mechanical/original/`](mechanical/original/) for reference.
@@ -120,14 +120,18 @@ Double-check your joints, then trim any excess wire so nothing shorts once every
 
 ## Step 3 — Assemble the enclosure
 
+<p align="center">
+  <img src="docs/aircircle-assembly-guide.png" alt="AirCircle assembly guide — wiring, mounting, and final assembly" width="720">
+</p>
+
 With the wiring done, mount the parts into the printed base and close it up.
 
-1. **Sensor module** — place the ENS160 + AHT21 board on the base and secure it with an **M3 × 4** screw.
-2. **ESP32-H2 SuperMini** — set the board on the base (USB port accessible for flashing) and fasten it with an **M3 × 6** screw.
-3. **LED ring** — lay the WS2812 ring on top of the stack. A snug print should hold it by friction. If it feels loose, add **small M2 screws for plastic** through the ring into the base bosses.
-4. **Top cover** — align the translucent top and screw it onto the base.
+1. **Sensor module** — place the ENS160 + AHT21 board in the base slot and secure it with an **M3 × 4** screw.
+2. **Tab + ESP32-H2** — insert the printed tab (`air_circ_lock.stl`) into the base, set the SuperMini on top with the USB-C port lined up to the base cutout, and fasten with an **M3 × 6** screw.
+3. **LED ring** — seat the WS2812 ring on the inner rim of the base. A snug print should hold it by friction. If it feels loose, add **small M2 screws for plastic**.
+4. **Top cover** — fit the translucent diffuser over the ring and screw it onto the base.
 
-That's it — plug in USB, flash if you haven't already, and let it warm up.
+Done — plug in USB, flash if you haven't already, and let it warm up.
 
 > **Tip:** Flash the firmware before screwing on the top cover — USB access and the boot button are much easier to reach.
 
@@ -255,7 +259,8 @@ Full band tables live in the [upstream LED reference](https://github.com/StuckAt
 ```
 AirCircle/
 ├── docs/
-│   └── aircircle-hero.png   # Cover image
+│   ├── aircircle-hero.png           # Cover image
+│   └── aircircle-assembly-guide.png # Visual assembly guide
 ├── mechanical/
 │   ├── air-circle/          # AirCircle enclosure (STL + STEP)
 │   └── original/            # Upstream reference enclosure files

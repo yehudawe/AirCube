@@ -19,7 +19,7 @@ You also need a USB cable for power/data and, for the **AirCircle** enclosure, t
 | Screw | Used for |
 |-------|----------|
 | **M3 × 4** | Sensor module → base |
-| **M3 × 6** | ESP32-H2 SuperMini → base |
+| **M3 × 6** | ESP32-H2 SuperMini → base (via tab) |
 | **M2** (short, for plastic) | LED ring → base *(optional)* |
 
 ## Wiring and soldering
@@ -42,10 +42,14 @@ Both ENS160 (0x52) and AHT21 (0x38) share the same I2C bus.
 
 ## Assembly
 
-1. **Sensor module** — mount on the base with an **M3 × 4** screw.
-2. **ESP32-H2 SuperMini** — place on the base and secure with an **M3 × 6** screw.
-3. **LED ring** — set on top. If the friction fit is loose, use **small M2 screws for plastic**.
-4. **Top cover** — screw onto the base. Done.
+<p align="center">
+  <img src="docs/aircircle-assembly-guide.png" alt="AirCircle assembly guide" width="640">
+</p>
+
+1. **Sensor module** — mount in the base with an **M3 × 4** screw.
+2. **Tab + ESP32-H2** — insert the printed tab (`air_circ_lock.stl`), place the SuperMini on top (USB-C aligned to the cutout), secure with an **M3 × 6** screw.
+3. **LED ring** — seat on the base rim. If the friction fit is loose, use **small M2 screws for plastic**.
+4. **Top cover** — fit the diffuser and screw onto the base. Done.
 
 Full step-by-step with printing and flashing: **[README.md](README.md)**.
 
