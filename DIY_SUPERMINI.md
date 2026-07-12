@@ -12,7 +12,7 @@ Example AliExpress listings for a DIY build (not affiliated with StuckAtPrototyp
 | **ENS160 + AHT21 sensor module** | Combined air-quality and temp/humidity board | [AliExpress](https://a.aliexpress.com/_c32NbwfH) |
 | **WS2812 RGB LED ring** | Pick a ring size that fits your enclosure (e.g. 16-LED) | [AliExpress](https://a.aliexpress.com/_c4Vc3oaj) |
 
-You also need a USB cable for power/data and, for the **AirCircle** enclosure, the 3D-printed parts in `mechanical/air-circle/`.
+You also need a USB cable for power/data. Print the **AirCircle** enclosure from [Printables](https://www.printables.com/model/1779452-aircircle-diy-air-quality-monitor-enclosure) or use the STLs in `mechanical/air-circle/`.
 
 ### Fasteners
 

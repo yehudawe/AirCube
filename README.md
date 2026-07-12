@@ -12,6 +12,7 @@ This is a **personal fork**, not the official AirCube. Think of it as the breadb
 
 | | |
 |---|---|
+| **Printables** | [AirCircle enclosure STLs](https://www.printables.com/model/1779452-aircircle-diy-air-quality-monitor-enclosure) |
 | **Upstream project** | [StuckAtPrototype/AirCube](https://github.com/StuckAtPrototype/AirCube) |
 | **License** | [Apache 2.0](LICENSE) |
 | **Extra build notes** | [DIY_SUPERMINI.md](DIY_SUPERMINI.md) |
@@ -58,7 +59,7 @@ The top cover fastens with screws at the printed mounting points on the base.
 
 ### 3D-printed parts
 
-Files live in [`mechanical/air-circle/`](mechanical/air-circle/):
+Download the STLs from **[Printables](https://www.printables.com/model/1779452-aircircle-diy-air-quality-monitor-enclosure)** or print from this repo:
 
 | File | Purpose |
 |------|---------|
